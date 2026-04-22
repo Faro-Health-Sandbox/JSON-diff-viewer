@@ -1,0 +1,1323 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self' https://cdn.tailwindcss.com; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; connect-src 'none'; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com;">
+  <title>FSD SOA Diff Visualizer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    code, .mono { font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace; }
+    .diff-row { animation: fadeSlideIn 0.15s ease; }
+    @keyframes fadeSlideIn { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: translateY(0); } }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    .file-label-a { background: #dbeafe; color: #1d4ed8; }
+    .file-label-b { background: #ede9fe; color: #7c3aed; }
+    .file-label-c { background: #fce7f3; color: #be185d; }
+    .file-label-d { background: #dcfce7; color: #15803d; }
+    .file-label-e { background: #fef9c3; color: #b45309; }
+    .row-added   { background: #F0FDF4; }
+    .row-removed { background: #FEF2F2; }
+    .row-changed { background: #FEF3C7; }
+    .row-updated { background: #FEF3C7; }
+    .val-added   { color: #166534; font-weight: 500; }
+    .val-removed { color: #991B1B; font-weight: 500; }
+    .val-changed { color: #92400E; font-weight: 500; }
+    .val-match   { color: #6B7280; }
+    .val-absent  { color: #D1D5DB; }
+    .row-moved   { background: #F5F3FF; }
+    .row-present { background: #FAFAFA; }
+    .val-moved   { color: #6D28D9; font-weight: 500; }
+  </style>
+</head>
+<body class="h-full bg-gray-50 text-gray-900">
+
+<!-- HEADER -->
+<header class="bg-white border-b border-gray-200 sticky top-0 z-20">
+  <div class="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
+    <div>
+      <h1 class="text-lg font-semibold text-gray-900 leading-tight">FSD SOA Diff Visualizer</h1>
+      <p class="text-xs text-gray-400 mt-0.5">Compare Schedule of Activities between study exports</p>
+    </div>
+    <span class="flex items-center gap-1.5 text-xs text-gray-500 bg-gray-100 px-3 py-1.5 rounded-full select-none">
+      <svg class="w-3 h-3 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+        <path fill-rule="evenodd" d="M10 1a4.5 4.5 0 00-4.5 4.5V9H5a2 2 0 00-2 2v6a2 2 0 002 2h10a2 2 0 002-2v-6a2 2 0 00-2-2h-.5V5.5A4.5 4.5 0 0010 1zm3 8V5.5a3 3 0 10-6 0V9h6z" clip-rule="evenodd"/>
+      </svg>
+      100% local — no data leaves your browser
+    </span>
+  </div>
+</header>
+
+<!-- MAIN -->
+<main class="max-w-6xl mx-auto px-4 py-8 space-y-5 overflow-x-hidden">
+
+  <!-- Upload Card -->
+  <div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 flex gap-5 items-stretch">
+    <div id="drop-zone"
+      class="flex-1 border-2 border-dashed border-gray-200 rounded-xl text-center cursor-pointer transition-all hover:border-blue-400 hover:bg-blue-50/40 select-none flex items-center justify-center"
+      role="button" tabindex="0" aria-label="Upload JSON files">
+      <div class="flex flex-col items-center gap-3 pointer-events-none px-4 py-6">
+        <div class="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center">
+          <svg class="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m.75 12l3 3m0 0l3-3m-3 3v-6m-1.5-9H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"/>
+          </svg>
+        </div>
+        <div>
+          <p class="text-sm font-medium text-gray-700">Drop 2–5 JSON files here</p>
+          <p class="text-xs text-gray-400 mt-1">or click to browse</p>
+        </div>
+      </div>
+    </div>
+    <input type="file" id="file-input" class="hidden" multiple accept=".json,application/json">
+
+    <div id="upload-right" class="hidden flex-1 flex flex-col justify-between gap-4 min-w-0">
+      <div id="file-list" class="flex flex-wrap gap-2 empty:hidden"></div>
+      <div id="soa-picker" class="hidden"></div>
+      <div id="controls" class="hidden flex items-center gap-3">
+        <button id="compare-btn"
+          class="flex items-center gap-2 px-3 py-1.5 bg-[#1a1a1a] hover:bg-[#2a2a2a] active:bg-[#111] text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          style="box-shadow:0 1px 0 rgba(0,0,0,.08),inset 0 -1px 0 rgba(0,0,0,.2)">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 3M21 7.5H7.5"/>
+          </svg>
+          Compare SOA
+        </button>
+        <button id="clear-btn"
+          class="px-3 py-1.5 text-sm text-gray-700 font-medium bg-white hover:bg-gray-50 active:bg-gray-100 border border-gray-300 rounded-lg transition-colors"
+          style="box-shadow:0 1px 0 rgba(0,0,0,.08)">
+          Clear all
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Results Section -->
+  <div id="results-section" class="hidden space-y-4">
+
+    <!-- Tab bar + Copy -->
+    <div class="flex items-center justify-between flex-wrap gap-3">
+      <div id="tab-bar" class="flex flex-wrap gap-1"></div>
+      <button id="copy-btn"
+        class="flex items-center gap-2 px-3 py-1.5 bg-[#1462FF] hover:bg-[#0d52e0] active:bg-[#0a47c9] text-white text-xs font-medium rounded-lg transition-colors"
+        style="box-shadow:0 1px 0 rgba(0,0,0,.08),inset 0 -1px 0 rgba(0,0,0,.2)">
+        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 7.5V6.108c0-1.135.845-2.098 1.976-2.192.373-.03.748-.057 1.123-.08M15.75 18H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08M15.75 18.75v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5A3.375 3.375 0 006.375 7.5H5.25m11.9-3.664A2.251 2.251 0 0015 2.25h-1.5a2.251 2.251 0 00-2.15 1.586m5.8 0c.065.21.1.433.1.664v.75h-6V4.5c0-.231.035-.454.1-.664M6.75 7.5H4.875c-.621 0-1.125.504-1.125 1.125v12c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V16.5a9 9 0 00-9-9z"/>
+        </svg>
+        Copy diff
+      </button>
+    </div>
+
+    <!-- Summary bar -->
+    <div id="summary-bar" class="flex items-center gap-3 flex-wrap"></div>
+
+    <!-- Diff table -->
+    <div id="diff-content" class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-x-auto"></div>
+
+  </div>
+</main>
+
+<!-- TOAST -->
+<div id="toast" class="hidden fixed top-5 right-5 z-50 flex items-center gap-2.5 bg-gray-900 text-white text-sm px-4 py-3 rounded-xl shadow-2xl">
+  <svg class="w-4 h-4 text-green-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+  </svg>
+  <span id="toast-msg">Copied!</span>
+</div>
+
+<script>
+'use strict';
+
+// ================================================================
+// STATE
+// ================================================================
+const state = {
+  files: [],            // { id, name, size, parsed, error }
+  soaSections: [],      // per-file array of { title, soa }
+  selectedSoaIdxs: [],  // selected section index per file
+  activeTab: 'all',
+  diffResult: null,     // { epochs, groups, activities, rules, days, footnotes }
+  compareRan: false,
+};
+
+// ================================================================
+// UTILITIES
+// ================================================================
+function esc(str) {
+  return String(str == null ? '' : str)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function fmtSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes/1024).toFixed(1) + ' KB';
+  return (bytes/1048576).toFixed(1) + ' MB';
+}
+function displayName(filename) {
+  return filename.replace(/\.json$/i,'').replace(/\.\d{4}-[A-Z]{3}-\d{2}T\S*/i,'');
+}
+function fileLabel(idx) { return String.fromCharCode(65 + idx); }
+function labelClass(idx) {
+  return ['file-label-a','file-label-b','file-label-c','file-label-d','file-label-e'][idx] || 'file-label-a';
+}
+function isEncrypted(val) {
+  return typeof val === 'string' && val.length > 80
+    && /^[A-Za-z0-9+/]{60,}={0,2}$/.test(val.replace(/\r?\n/g,''));
+}
+function isHtml(val) { return typeof val === 'string' && /<[a-z][\s\S]*>/i.test(val); }
+function stripHtml(str) {
+  // Remove tags, then decode common HTML entities
+  return String(str || '').replace(/<[^>]*>/g,'')
+    .replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>')
+    .replace(/&nbsp;/g,' ').replace(/&ndash;/g,'–').replace(/&mdash;/g,'—')
+    .replace(/&quot;/g,'"').replace(/&#39;/g,"'")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
+    .trim();
+}
+function humanKey(key) {
+  return key.replace(/([a-z])([A-Z])/g,'$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g,'$1 $2')
+    .replace(/^./,s => s.toUpperCase()).trim();
+}
+function toast(msg = 'Done!', ms = 2500) {
+  const el = document.getElementById('toast');
+  document.getElementById('toast-msg').textContent = msg;
+  el.classList.remove('hidden');
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.add('hidden'), ms);
+}
+function displayVal(val) {
+  if (val === null || val === undefined) return '—';
+  if (isEncrypted(val)) return '[encrypted]';
+  if (isHtml(val)) return stripHtml(val).slice(0,120) || '[rich text]';
+  if (typeof val === 'boolean') return String(val);
+  if (typeof val === 'number') return String(val);
+  if (typeof val === 'string') return val.length > 120 ? val.slice(0,120) + '…' : val;
+  if (Array.isArray(val)) return `[${val.length} items]`;
+  if (typeof val === 'object') {
+    const name = val.name ?? val.title ?? val.label ?? null;
+    if (name) return String(name);
+    return `{${Object.keys(val).length} fields}`;
+  }
+  return String(val);
+}
+// Resolve dot-path like 'epochType.name' on an object
+function getPath(obj, path) {
+  if (obj == null) return null;
+  let cur = obj;
+  for (const p of path.split('.')) {
+    if (cur == null || typeof cur !== 'object') return null;
+    cur = cur[p] ?? null;
+  }
+  return cur;
+}
+function validFiles() { return state.files.filter(f => f.parsed && !f.error); }
+
+// ================================================================
+// SOA EXTRACTION
+// ================================================================
+function extractSoaSections(parsed) {
+  if (!parsed || typeof parsed !== 'object') return [];
+  const result = [];
+  const walk = (sections) => {
+    if (!Array.isArray(sections)) return;
+    for (const sec of sections) {
+      if (!sec) continue;
+      if (sec.scheduleOfActivities) {
+        result.push({
+          title: stripHtml(sec.title || '') || sec.id || 'Untitled SOA',
+          soa: sec.scheduleOfActivities,
+        });
+      }
+      // Recurse into folder/container sections
+      if (sec.children) walk(sec.children);
+      if (sec.sections) walk(sec.sections);
+    }
+  };
+  walk(parsed.sections);
+  return result;
+}
+
+// ================================================================
+// DIFF ENGINE
+// ================================================================
+
+// Union of all keys across N maps
+function unionKeys(maps) {
+  const all = new Set();
+  for (const m of maps) for (const k of m.keys()) all.add(k);
+  return all;
+}
+
+// Determine change type from values array (null = absent in that file)
+function changeType(values) {
+  const nulls = values.filter(v => v === null || v === undefined).length;
+  if (nulls === values.length) return null;
+  if (nulls === 0) return 'changed';
+  return values[0] == null ? 'added' : 'removed';
+}
+
+// Stable string equality ignoring null-vs-undefined
+function eq(a, b) { return String(a ?? '') === String(b ?? ''); }
+function allEq(vals) { return vals.every(v => eq(v, vals[0])); }
+
+// ---- Semantic key builders ----
+
+// Epochs: key = epochType.id (e.g. "screening", "blinded-treatment")
+function buildEpochByTypeIdMap(arr) {
+  const map = new Map();
+  if (Array.isArray(arr)) for (const e of arr) if (e?.epochType?.id) map.set(e.epochType.id, e);
+  return map;
+}
+
+// Per-file epoch UUID → display title (for resolving scheduledDay.epochId references)
+function buildEpochRefMap(arr) {
+  const map = new Map();
+  if (Array.isArray(arr)) {
+    for (const e of arr) {
+      if (e?.id) map.set(e.id, stripHtml(e.title || '') || e.epochType?.name || e.epochType?.id || '');
+    }
+  }
+  return map;
+}
+
+// Groups / days / time slots: key = name
+function buildByName(arr) {
+  const map = new Map();
+  if (Array.isArray(arr)) for (const item of arr) if (item?.name != null) map.set(String(item.name), item);
+  return map;
+}
+
+// Activities: flatten nested children, key = name (within group scope)
+function flattenChildrenByName(children) {
+  const map = new Map();
+  const recurse = nodes => {
+    if (!Array.isArray(nodes)) return;
+    for (const n of nodes) {
+      if (n?.name) map.set(n.name, n);
+      if (n?.children) recurse(n.children);
+    }
+  };
+  recurse(children);
+  return map;
+}
+
+// Schedule rules: composite key — type|epochDay for fixed/non-fixed-day,
+// custom-non-reported|description for custom-non-reported, type|epochDay|desc otherwise
+function buildRuleKeyMap(rules) {
+  const map = new Map();
+  if (!Array.isArray(rules)) return map;
+  for (const rule of rules) {
+    const t = rule.type ?? '';
+    let key;
+    if (t === 'custom-non-reported') {
+      key = `custom-non-reported|${rule.description ?? ''}`;
+    } else {
+      key = `${t}|${rule.epochDay ?? ''}`;
+    }
+    if (!map.has(key)) map.set(key, rule); // first occurrence wins
+  }
+  return map;
+}
+
+// Footnotes: key = whitespace-normalised text
+function buildFootnoteByTextMap(arr) {
+  const map = new Map();
+  if (Array.isArray(arr)) {
+    for (const fn of arr) {
+      const key = String(fn?.text ?? '').replace(/\s+/g, ' ').trim();
+      if (key && !map.has(key)) map.set(key, fn);
+    }
+  }
+  return map;
+}
+
+// Per-file activity UUID → name (for resolving footnote.activityIds)
+function buildActivityIdNameMap(soa) {
+  const map = new Map();
+  const recurse = children => {
+    for (const act of (children || [])) {
+      if (act?.id && act?.name) map.set(act.id, act.name);
+      if (act?.children) recurse(act.children);
+    }
+  };
+  for (const grp of (soa?.activityGroups || [])) recurse(grp?.children);
+  return map;
+}
+
+// Format added/removed activity value including type info
+function fmtActivitySummary(act) {
+  if (!act) return null;
+  const meta = [
+    act.activityType?.name ?? act.type,
+    act.activitySubType?.name ?? act.subType ?? act.subtype,
+  ].filter(v => v != null && v !== '');
+  return (act.name || '(unnamed)') + (meta.length ? ` (${meta.join(', ')})` : '');
+}
+
+// Format an added/removed rule as a readable property summary
+function fmtRuleSummary(rule) {
+  if (!rule) return null;
+  const parts = [];
+  if (rule.type != null)        parts.push(`type: ${rule.type}`);
+  if (rule.epochDay != null)    parts.push(`day: ${rule.epochDay}`);
+  if (rule.endEpochDay != null) parts.push(`endDay: ${rule.endEpochDay}`);
+  if (rule.cardinality != null) parts.push(`cardinality: ${rule.cardinality}`);
+  if (rule.showAllDays != null) parts.push(`showAllDays: ${rule.showAllDays}`);
+  if (rule.description != null) parts.push(`desc: "${rule.description}"`);
+  return parts.length ? parts.join(', ') : '(no fields)';
+}
+
+// --- 1. Epochs (match by epochType.id) ---
+function diffEpochs(soas) {
+  const typeIdMaps  = soas.map(soa => buildEpochByTypeIdMap(soa?.epochConfiguration?.epochs));
+  const epochRefMaps = soas.map(soa => buildEpochRefMap(soa?.epochConfiguration?.epochs));
+  const allKeys = unionKeys(typeIdMaps);
+  const rows = [];
+
+  for (const typeId of allKeys) {
+    const epochs = typeIdMaps.map(m => m.get(typeId) || null);
+    if (epochs.every(e => e === null)) continue;
+    const rep = epochs.find(e => e !== null);
+    const title = stripHtml(rep?.title || '') || rep?.epochType?.name || typeId;
+    const ct = changeType(epochs);
+
+    if (epochs.some(e => e === null)) {
+      const summary = [
+        rep.title ? `title: ${stripHtml(rep.title)}` : null,
+        rep.epochType?.name ? `type: ${rep.epochType.name}` : null,
+        rep.duration?.days != null ? `duration: ${rep.duration.days} ${rep.duration.timeUnit || 'days'}` : null,
+      ].filter(Boolean).join(', ');
+      rows.push({ category:'Epoch', location:title, field:'—', values:epochs.map(e => e ? summary : null), changeType:ct });
+    } else {
+      for (const [path, label, fmt] of [
+        ['title',            'title',           v => v ? stripHtml(v) : null],
+        ['epochType.name',   'epoch type',      null],
+        ['duration.days',    'duration (days)', null],
+        ['duration.timeUnit','duration unit',   null],
+      ]) {
+        const vals = epochs.map(e => { const v = getPath(e, path); return fmt ? fmt(v) : v; });
+        if (allEq(vals)) continue;
+        rows.push({ category:'Epoch', location:title, field:label, values:vals, changeType:'changed' });
+      }
+    }
+  }
+  return { rows, epochRefMaps };
+}
+
+// --- 2. Activity Groups (match by name) ---
+function diffActivityGroups(soas) {
+  const maps = soas.map(soa => buildByName(soa?.activityGroups));
+  const allNames = unionKeys(maps);
+  const rows = [];
+
+  for (const name of allNames) {
+    const groups = maps.map(m => m.get(name) || null);
+    if (groups.every(g => g === null)) continue;
+    // 'present' = matched in all files (shown as reference row in Groups tab)
+    // 'added'/'removed' = only in some files
+    const ct = groups.some(g => g === null) ? changeType(groups) : 'present';
+    rows.push({
+      category: 'Activity Group', location: name, field: '—',
+      values: groups.map(g => g ? (g.name || '(unnamed)') : null),
+      changeType: ct,
+    });
+  }
+  return { rows };
+}
+
+// --- 3. Activities (match per activity name, compute group-membership set per file) ---
+// activityMap key: `${groupName}\x00${actName}` → { name, groupName, perFile: (act|null)[] }
+//
+// For each activity name, we compute the set of groups it appears in per file. The diff
+// is then expressed as set membership changes:
+//   - groupsA - groupsB = groups only in file A  (removed from those groups)
+//   - groupsB - groupsA = groups only in file B  (added to those groups)
+//   - groupsA ∩ groupsB = groups present in both (matched — check placeholder status)
+//
+// Interpretation:
+//   - only in A + only in B both non-empty → "Moved" (real cross-group relocation)
+//   - only in A non-empty, only in B empty → "Removed" (with matched groups noted as context)
+//   - only in A empty, only in B non-empty → "Added"   (with matched groups noted as context)
+//   - both empty, matched non-empty        → no-op (or placeholder-change row)
+function diffActivities(soas) {
+  const n = soas.length;
+
+  // Per file: actName → Map<groupName, activity>
+  const actToGroupsPerFile = soas.map(soa => {
+    const m = new Map();
+    for (const grp of (soa?.activityGroups || [])) {
+      const groupName = grp.name || '';
+      const recurse = children => {
+        for (const act of (children || [])) {
+          if (act?.name) {
+            if (!m.has(act.name)) m.set(act.name, new Map());
+            m.get(act.name).set(groupName, act);
+          }
+          if (act?.children) recurse(act.children);
+        }
+      };
+      recurse(grp?.children);
+    }
+    return m;
+  });
+
+  // Union of all activity names
+  const allActNames = new Set();
+  for (const m of actToGroupsPerFile) for (const name of m.keys()) allActNames.add(name);
+
+  const rows = [];
+  const activityMap = new Map();
+
+  for (const actName of allActNames) {
+    const gmPerFile = actToGroupsPerFile.map(m => m.get(actName) || new Map());
+
+    // All groups this activity appears in (across all files)
+    const allGroups = new Set();
+    for (const gm of gmPerFile) for (const g of gm.keys()) allGroups.add(g);
+
+    // Classify each group: matched (in all files) vs. onlyIn[fi] (only in that file)
+    const matchedGroups = [];
+    const onlyIn = Array.from({ length: n }, () => []);
+    for (const g of allGroups) {
+      const present = gmPerFile.map(gm => gm.has(g));
+      if (present.every(p => p)) matchedGroups.push(g);
+      else for (let fi = 0; fi < n; fi++) if (present[fi]) onlyIn[fi].push(g);
+    }
+
+    // Populate activityMap for EVERY (group, actName) composite key — needed by diffScheduleRules
+    for (const g of allGroups) {
+      const perFile = gmPerFile.map(gm => gm.get(g) || null);
+      activityMap.set(`${g}\x00${actName}`, { name: actName, groupName: g, perFile });
+    }
+
+    // Matched groups: compare placeholder status
+    for (const g of matchedGroups) {
+      const activities = gmPerFile.map(gm => gm.get(g));
+      const phVals = activities.map(a =>
+        (a?.placeholderName != null || a?.assessmentMeasurementConfigurationId == null)
+          ? 'placeholder' : 'configured activity'
+      );
+      if (!allEq(phVals)) {
+        rows.push({
+          category: 'Activity',
+          location: g ? `${g} › ${actName}` : actName,
+          field: 'type', values: phVals, changeType: 'changed',
+        });
+      }
+    }
+
+    // Diff rows for unmatched group memberships (N=2 only; N>2 falls back to separate rows)
+    if (n === 2) {
+      const [only0, only1] = onlyIn;
+      const matchedNote = matchedGroups.length ? ` (also in ${matchedGroups.join(', ')})` : '';
+
+      if (only0.length === 0 && only1.length === 0) continue; // no group changes
+
+      if (only0.length > 0 && only1.length > 0) {
+        // Cross-group Move: A had it in {only0}, B has it in {only1}
+        const actA = gmPerFile[0].get(only0[0]);
+        const actB = gmPerFile[1].get(only1[0]);
+        const fromStr = only0.join(' + '), toStr = only1.join(' + ');
+        const movedLoc = `${fromStr} › ${actName} → ${toStr} › ${actName}${matchedNote}`;
+        rows.push({
+          category: 'Activity', location: movedLoc, field: 'group',
+          values: [fromStr, toStr], changeType: 'moved',
+        });
+      } else if (only0.length > 0) {
+        // Pure removal from some groups in file A (possibly still in matched groups)
+        for (const g of only0) {
+          const act = gmPerFile[0].get(g);
+          const loc = (g ? `${g} › ${actName}` : actName) + matchedNote;
+          rows.push({
+            category: 'Activity', location: loc, field: '—',
+            values: [fmtActivitySummary(act), null], changeType: 'removed',
+          });
+        }
+      } else {
+        // Pure addition to some groups in file B (possibly already in matched groups)
+        for (const g of only1) {
+          const act = gmPerFile[1].get(g);
+          const loc = (g ? `${g} › ${actName}` : actName) + matchedNote;
+          rows.push({
+            category: 'Activity', location: loc, field: '—',
+            values: [null, fmtActivitySummary(act)], changeType: 'added',
+          });
+        }
+      }
+    } else {
+      // N > 2: emit one row per group-file mismatch
+      for (let fi = 0; fi < n; fi++) {
+        for (const g of onlyIn[fi]) {
+          const act = gmPerFile[fi].get(g);
+          const values = gmPerFile.map((gm, i) => i === fi ? fmtActivitySummary(act) : null);
+          const ct = changeType(values);
+          if (ct) rows.push({
+            category: 'Activity',
+            location: g ? `${g} › ${actName}` : actName,
+            field: '—', values, changeType: ct,
+          });
+        }
+      }
+    }
+  }
+
+  return { rows, activityMap };
+}
+
+// --- 4. Schedule Rules (match by composite key, pair unmatched rules when counts align) ---
+// Note: cardinality and showAllDays suppressed — these are noisy defaults that rarely signal real changes
+const RULE_COMPARE_FIELDS = ['endEpochDay','description'];
+
+// Compare two pre-built rule key maps and return diff rows for a given location (N=2 only).
+function compareRuleMaps(mapA, mapB, location) {
+  const allRuleKeys = new Set([...mapA.keys(), ...mapB.keys()]);
+  if (!allRuleKeys.size) return [];
+
+  const actRows = [];
+  const ua = [], ub = []; // unmatched rules per side
+
+  for (const ruleKey of allRuleKeys) {
+    const ra = mapA.get(ruleKey) || null;
+    const rb = mapB.get(ruleKey) || null;
+    if (!ra && !rb) continue;
+
+    if (ra && rb) {
+      // Fully matched — compare non-key fields
+      const isCustom = ruleKey.startsWith('custom-non-reported|');
+      const fields = isCustom ? RULE_COMPARE_FIELDS.filter(f => f !== 'description') : RULE_COMPARE_FIELDS;
+      for (const field of fields) {
+        if (eq(ra[field], rb[field])) continue;
+        actRows.push({ category:'Schedule Rule', location, field,
+          values:[ra[field]??null, rb[field]??null], changeType:'changed' });
+      }
+    } else {
+      if (ra) ua.push(ra);
+      if (rb) ub.push(rb);
+    }
+  }
+
+  // Pair unmatched rules
+  if (ua.length > 0 || ub.length > 0) {
+    if (ua.length === ub.length && ua.length > 0) {
+      // Clean 1-to-1 pairing — compare field by field, consolidate epoch-day rows
+      const pairRows = [];
+      for (let i = 0; i < ua.length; i++) {
+        const ra = ua[i], rb = ub[i];
+        for (const f of ['type','epochDay','endEpochDay','description']) {
+          if (!eq(ra[f], rb[f])) {
+            pairRows.push({ category:'Schedule Rule', location, field:f,
+              values:[ra[f]??null, rb[f]??null], changeType:'updated' });
+          }
+        }
+      }
+      if (!pairRows.length) {
+        for (let i = 0; i < ua.length; i++) {
+          actRows.push({ category:'Schedule Rule', location, field:'—',
+            values:[fmtRuleSummary(ua[i]), fmtRuleSummary(ub[i])], changeType:'updated' });
+        }
+      } else {
+        const edRows = pairRows.filter(r => r.field === 'epochDay');
+        const others  = pairRows.filter(r => r.field !== 'epochDay');
+        if (edRows.length > 1) {
+          const aStr = edRows.map(r => r.values[0]).filter(v => v != null).join(', ');
+          const bStr = edRows.map(r => r.values[1]).filter(v => v != null).join(', ');
+          actRows.push({ category:'Schedule Rule', location, field:'epochDay',
+            values:[aStr || null, bStr || null], changeType:'updated' });
+        } else {
+          actRows.push(...edRows);
+        }
+        actRows.push(...others);
+      }
+    } else {
+      // Counts differ — consolidate added/removed rules by type with comma-separated days
+      const consolidateSide = (rules, sideIdx) => {
+        const byType = new Map();
+        for (const r of rules) {
+          const t = r.type ?? 'unknown';
+          if (!byType.has(t)) byType.set(t, []);
+          byType.get(t).push(r);
+        }
+        for (const [type, rs] of byType) {
+          const days = rs.map(r => r.epochDay).filter(d => d != null).sort((a,b)=>a-b);
+          const dayStr = days.length ? ` — day${days.length > 1 ? 's' : ''}: ${days.join(', ')}` : '';
+          const vals = sideIdx === 0 ? [`${type}${dayStr}`, null] : [null, `${type}${dayStr}`];
+          actRows.push({ category:'Schedule Rule', location, field:'scheduleRuleType',
+            values: vals, changeType: sideIdx === 0 ? 'removed' : 'added' });
+        }
+      };
+      consolidateSide(ua, 0);
+      consolidateSide(ub, 1);
+    }
+  }
+
+  return actRows;
+}
+
+function diffScheduleRules(soas, activityMap) {
+  const n = soas.length;
+  const rows = [];
+
+  if (n === 2) {
+    // Group entries by actName to detect cross-group moves
+    const byActName = new Map();
+    for (const [, entry] of activityMap) {
+      const { name: actName } = entry;
+      if (!byActName.has(actName)) byActName.set(actName, []);
+      byActName.get(actName).push(entry);
+    }
+
+    for (const [actName, entries] of byActName) {
+      // Classify: matched = activity in same group in both files
+      //           aOnly   = activity only in file A (group not present in B)
+      //           bOnly   = activity only in file B (group not present in A)
+      const matched = entries.filter(e => e.perFile[0] != null && e.perFile[1] != null);
+      const aOnly   = entries.filter(e => e.perFile[0] != null && e.perFile[1] == null);
+      const bOnly   = entries.filter(e => e.perFile[0] == null && e.perFile[1] != null);
+
+      // Matched groups: normal rule diff
+      for (const entry of matched) {
+        const location = entry.groupName ? `${entry.groupName} › ${actName}` : actName;
+        const mapA = buildRuleKeyMap(entry.perFile[0]?.activityScheduleRules);
+        const mapB = buildRuleKeyMap(entry.perFile[1]?.activityScheduleRules);
+        const actRows = compareRuleMaps(mapA, mapB, location);
+        if (actRows.length) {
+          rows.push({ isGroupHeader:true, location, category:'Schedule Rule', field:'', values:[], changeType:'' });
+          rows.push(...actRows);
+        }
+      }
+
+      if (aOnly.length > 0 && bOnly.length > 0) {
+        // Cross-group move: same activity name, different groups between A and B.
+        // Merge all A-side rules and all B-side rules, then compare.
+        // If rules are identical → suppress entirely (already captured in Activities "moved" row).
+        // If rules differ → show under a "GroupA → GroupB › actName" location.
+        const mergedA = new Map();
+        for (const e of aOnly) for (const [k,v] of buildRuleKeyMap(e.perFile[0]?.activityScheduleRules)) mergedA.set(k, v);
+        const mergedB = new Map();
+        for (const e of bOnly) for (const [k,v] of buildRuleKeyMap(e.perFile[1]?.activityScheduleRules)) mergedB.set(k, v);
+
+        const fromGroups = aOnly.map(e => e.groupName).filter(Boolean).join(' + ') || actName;
+        const toGroups   = bOnly.map(e => e.groupName).filter(Boolean).join(' + ') || actName;
+        const movedLoc   = `${fromGroups} → ${toGroups} › ${actName}`;
+
+        const crossRows = compareRuleMaps(mergedA, mergedB, movedLoc);
+        if (crossRows.length) {
+          rows.push({ isGroupHeader:true, location: movedLoc, category:'Schedule Rule', field:'', values:[], changeType:'' });
+          rows.push(...crossRows);
+        }
+        // crossRows empty → rules identical after group move → suppress (no noise)
+
+      } else {
+        // Pure adds or removes — no cross-group counterpart, show as-is
+        for (const entry of [...aOnly, ...bOnly]) {
+          const location = entry.groupName ? `${entry.groupName} › ${actName}` : actName;
+          const mapA = buildRuleKeyMap(entry.perFile[0]?.activityScheduleRules);
+          const mapB = buildRuleKeyMap(entry.perFile[1]?.activityScheduleRules);
+          const actRows = compareRuleMaps(mapA, mapB, location);
+          if (actRows.length) {
+            rows.push({ isGroupHeader:true, location, category:'Schedule Rule', field:'', values:[], changeType:'' });
+            rows.push(...actRows);
+          }
+        }
+      }
+    }
+
+  } else {
+    // N > 2: no cross-group move detection; process each composite key entry directly
+    for (const [, { name:actName, groupName, perFile }] of activityMap) {
+      const location = groupName ? `${groupName} › ${actName}` : actName;
+      const ruleMaps = perFile.map(act => buildRuleKeyMap(act?.activityScheduleRules));
+      const allRuleKeys = unionKeys(ruleMaps);
+      if (!allRuleKeys.size) continue;
+
+      const actRows = [];
+      const unmatched = Array.from({ length: n }, () => []);
+
+      for (const ruleKey of allRuleKeys) {
+        const rules = ruleMaps.map(m => m.get(ruleKey) || null);
+        if (rules.every(r => r === null)) continue;
+        if (rules.every(r => r !== null)) {
+          const isCustom = ruleKey.startsWith('custom-non-reported|');
+          const fields = isCustom ? RULE_COMPARE_FIELDS.filter(f => f !== 'description') : RULE_COMPARE_FIELDS;
+          for (const field of fields) {
+            const vals = rules.map(r => r[field] ?? null);
+            if (allEq(vals)) continue;
+            actRows.push({ category:'Schedule Rule', location, field, values:vals, changeType:'changed' });
+          }
+        } else {
+          rules.forEach((r, fi) => { if (r !== null) unmatched[fi].push(r); });
+        }
+      }
+      unmatched.forEach((list, fi) => {
+        for (const r of list) {
+          const values = perFile.map((_, fi2) => fi2 === fi ? fmtRuleSummary(r) : null);
+          actRows.push({ category:'Schedule Rule', location, field:'—',
+            values, changeType: changeType(values) || 'removed' });
+        }
+      });
+
+      if (actRows.length) {
+        rows.push({ isGroupHeader:true, location, category:'Schedule Rule', field:'', values:[], changeType:'' });
+        rows.push(...actRows);
+      }
+    }
+  }
+
+  return rows;
+}
+
+// --- 5. Scheduled Days (match by name / visit label) ---
+function diffScheduledDays(soas, epochRefMaps) {
+  const maps = soas.map(soa => buildByName(soa?.scheduledDays));
+  const allNames = unionKeys(maps);
+  const rows = [];
+
+  for (const dayName of allNames) {
+    const days = maps.map(m => m.get(dayName) || null);
+    if (days.every(d => d === null)) continue;
+    const rep = days.find(d => d !== null);
+    const repFi = days.findIndex(d => d !== null);
+    const ct = changeType(days);
+
+    // Resolve epoch title from the representative file (epochId → title)
+    const epochTitle = epochRefMaps[repFi]?.get(rep.epochId) || '';
+    // Location prefixed with epoch: "Screening › Visit 4"
+    const location = epochTitle ? `${epochTitle} › ${dayName}` : dayName;
+    // Epoch Day column label: "Screening Day 3" or plain "Day 3"
+    const rawEpochDay = rep?.epochDay ?? null;
+    const epochDayLabel = rawEpochDay != null
+      ? (epochTitle ? `${epochTitle} Day ${rawEpochDay}` : `Day ${rawEpochDay}`)
+      : null;
+
+    if (days.some(d => d === null)) {
+      const summary = [
+        rep.epochDay != null ? `day: ${rep.epochDay}` : null,
+        epochTitle ? `epoch: ${epochTitle}` : null,
+        rep.type ? `type: ${rep.type}` : null,
+      ].filter(Boolean).join(', ');
+      rows.push({ category:'Scheduled Day', location, epochDay:epochDayLabel, field:'—',
+        values:days.map(d => d ? summary : null), changeType:ct });
+    } else {
+      // Compare type field (epochDay and epoch are handled below)
+      for (const [field, label] of [['type','type']]) {
+        const vals = days.map(d => d?.[field] ?? null);
+        if (allEq(vals)) continue;
+        rows.push({ category:'Scheduled Day', location, epochDay:epochDayLabel, field:label, values:vals, changeType:'changed' });
+      }
+      // Epoch: resolve each file's epochId to a human title
+      const epochVals = days.map((d, fi) => epochRefMaps[fi]?.get(d?.epochId) || null);
+      if (!allEq(epochVals)) {
+        rows.push({ category:'Scheduled Day', location, epochDay:epochDayLabel, field:'epoch', values:epochVals, changeType:'changed' });
+      }
+      // EpochDay number comparison (catches days that moved within an epoch)
+      const epochDayVals = days.map(d => d?.epochDay ?? null);
+      if (!allEq(epochDayVals)) {
+        rows.push({ category:'Scheduled Day', location, epochDay:epochDayLabel, field:'epoch day', values:epochDayVals, changeType:'changed' });
+      }
+
+      // Time slots (match by name) — only inject rows when slots actually differ
+      const slotMaps = days.map(d => buildByName(d?.intraDaySchedule?.timeSlots));
+      const allSlotNames = unionKeys(slotMaps);
+      const slotRows = [];
+      for (const slotName of allSlotNames) {
+        const slots = slotMaps.map(m => m.get(slotName) || null);
+        if (slots.every(s => s === null)) continue;
+        const slotCt = changeType(slots);
+        const slotLoc = `${location} › ${slotName}`;
+        if (slots.some(s => s === null)) {
+          const rs = slots.find(s => s !== null);
+          const sum = [`duration: ${rs.duration ?? '—'}`, rs.type ? `type: ${rs.type}` : null].filter(Boolean).join(', ');
+          slotRows.push({ category:'Time Slot', location:slotLoc, epochDay:epochDayLabel, field:'—',
+            values:slots.map(s => s ? sum : null), changeType:slotCt });
+        } else {
+          for (const field of ['duration','type']) {
+            const vals = slots.map(s => s?.[field] ?? null);
+            if (allEq(vals)) continue;
+            slotRows.push({ category:'Time Slot', location:slotLoc, epochDay:epochDayLabel, field, values:vals, changeType:'changed' });
+          }
+        }
+      }
+      // Inject separator above slot rows only when there are actual slot diffs
+      if (slotRows.length) {
+        rows.push({ isGroupHeader:true, location:`${location} — time slots`, category:'Time Slot', field:'', values:[], changeType:'' });
+        rows.push(...slotRows);
+      }
+    }
+  }
+  return rows;
+}
+
+// --- 6. Footnotes (match by normalised text) ---
+function diffFootnotes(soas) {
+  // Build per-file UUID→activityName maps so we can resolve activityIds
+  const actIdMaps = soas.map(soa => buildActivityIdNameMap(soa));
+  const maps = soas.map(soa => buildFootnoteByTextMap(soa?.footnotes));
+  const allKeys = unionKeys(maps);
+  const rows = [];
+
+  for (const textKey of allKeys) {
+    const notes = maps.map(m => m.get(textKey) || null);
+    if (notes.every(n => n === null)) continue;
+    const preview = textKey.slice(0, 60) + (textKey.length > 60 ? '…' : '');
+    const ct = changeType(notes);
+
+    if (notes.some(n => n === null)) {
+      // Resolve activity names for added/removed footnotes; fall back to text preview
+      const values = notes.map((n, fi) => {
+        if (!n) return null;
+        if (n.activityIds?.length) {
+          const names = n.activityIds
+            .map(id => actIdMaps[fi].get(id) || null)
+            .filter(Boolean)
+            .sort()
+            .join(', ');
+          if (names) return names;
+        }
+        return n.text?.slice(0, 80) || '(no text)';
+      });
+      rows.push({ category:'Footnote', location:preview, field:'attached activities', values, changeType:ct });
+    } else {
+      // Text is the key — compare resolved activity name lists
+      const actLists = notes.map((n, fi) => {
+        if (!n?.activityIds?.length) return '(none)';
+        return n.activityIds
+          .map(id => actIdMaps[fi].get(id) || id)
+          .sort()
+          .join(', ');
+      });
+      if (!allEq(actLists)) {
+        rows.push({ category:'Footnote', location:preview, field:'attached activities',
+          values:actLists, changeType:'changed' });
+      }
+    }
+  }
+  return rows;
+}
+
+// --- Master ---
+function runSoaDiff(soas) {
+  const { rows: epochs, epochRefMaps } = diffEpochs(soas);
+  const { rows: groups } = diffActivityGroups(soas);
+  const { rows: activities, activityMap } = diffActivities(soas);
+  const rules = diffScheduleRules(soas, activityMap);
+  const days = diffScheduledDays(soas, epochRefMaps);
+  const footnotes = diffFootnotes(soas);
+  return { epochs, groups, activities, rules, days, footnotes };
+}
+
+// ================================================================
+// RENDERING
+// ================================================================
+const TABS = [
+  { id:'all',        label:'All' },
+  { id:'epochs',     label:'Epochs' },
+  { id:'groups',     label:'Activity Groups' },
+  { id:'activities', label:'Activities' },
+  { id:'rules',      label:'Schedule Rules' },
+  { id:'days',       label:'Scheduled Days' },
+  { id:'intraday',   label:'Intraday' },
+  { id:'footnotes',  label:'Footnotes' },
+];
+
+// Tabs where the Epoch Day column is not meaningful (hidden to reduce noise)
+const TABS_HIDE_EPOCH_DAY = new Set(['epochs', 'groups', 'activities', 'footnotes']);
+
+// Helper: split d.days into day-level rows vs time-slot rows
+// Time Slot rows and their isGroupHeader separators share category:'Time Slot'
+function getDayRows(days)      { return days.filter(r => r.category !== 'Time Slot'); }
+function getIntradayRows(days) { return days.filter(r => r.category === 'Time Slot' || (r.isGroupHeader && r.category === 'Time Slot')); }
+
+function getTabRows(tab) {
+  if (!state.diffResult) return [];
+  const d = state.diffResult;
+  switch (tab) {
+    case 'all':        return [...d.epochs, ...d.groups.filter(r => r.changeType !== 'present'), ...d.activities, ...d.rules, ...d.days, ...d.footnotes];
+    case 'epochs':     return d.epochs;
+    case 'groups':     return d.groups;
+    case 'activities': return d.activities;
+    case 'rules':      return d.rules;
+    case 'days':       return getDayRows(d.days);
+    case 'intraday':   return getIntradayRows(d.days);
+    case 'footnotes':  return d.footnotes;
+    default:           return [];
+  }
+}
+
+function countRows(rows) {
+  let added = 0, removed = 0, changed = 0;
+  for (const r of rows) {
+    if (r.isGroupHeader || r.changeType === 'present') continue;
+    if (r.changeType === 'added')                         added++;
+    else if (r.changeType === 'removed')                  removed++;
+    else if (r.changeType === 'changed' || r.changeType === 'updated' || r.changeType === 'moved') changed++;
+  }
+  return { added, removed, changed, total: added + removed + changed };
+}
+
+function renderResults() {
+  const vf = validFiles();
+  if (!state.diffResult) return;
+  const d = state.diffResult;
+
+  // --- Tab bar ---
+  document.getElementById('tab-bar').innerHTML = TABS.map(tab => {
+    const { total } = countRows(getTabRows(tab.id));
+    const active = state.activeTab === tab.id;
+    return `<button data-tab="${tab.id}" class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+      active ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-100 border border-gray-200 bg-white'
+    }" ${active ? '' : 'style="box-shadow:0 1px 0 rgba(0,0,0,.06)"'}>
+      ${esc(tab.label)}<span class="ml-1.5 ${active ? 'text-gray-400' : 'text-gray-400'}">${total}</span>
+    </button>`;
+  }).join('');
+
+  // --- Summary bar ---
+  const { added, removed, changed } = countRows(getTabRows(state.activeTab));
+  document.getElementById('summary-bar').innerHTML = `
+    <span class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium" style="background:#F0FDF4;color:#166534">
+      <span class="w-1.5 h-1.5 rounded-full inline-block" style="background:#166534"></span>${added} added
+    </span>
+    <span class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium" style="background:#FEF2F2;color:#991B1B">
+      <span class="w-1.5 h-1.5 rounded-full inline-block" style="background:#991B1B"></span>${removed} removed
+    </span>
+    <span class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium" style="background:#FEF3C7;color:#92400E">
+      <span class="w-1.5 h-1.5 rounded-full inline-block" style="background:#92400E"></span>${changed} changed
+    </span>`;
+
+  // --- Diff table ---
+  const rows = getTabRows(state.activeTab);
+  const content = document.getElementById('diff-content');
+  const showEpochDay = !TABS_HIDE_EPOCH_DAY.has(state.activeTab);
+  const totalCols = (showEpochDay ? 4 : 3) + vf.length + 1; // Category + Location + [EpochDay] + Field + N files + Change
+
+  const activityDisclaimer = state.activeTab === 'activities'
+    ? `<div class="px-4 py-2.5 text-xs text-amber-700 bg-amber-50 border-b border-amber-100 flex items-start gap-2">
+        <svg class="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-amber-500" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126z"/>
+        </svg>
+        <span><strong>Note:</strong> Placeholder or sub-item activities with slightly different names between exports may appear as false Add/Remove pairs.</span>
+      </div>`
+    : '';
+
+  if (!rows.length) {
+    content.innerHTML = activityDisclaimer + `<div class="px-8 py-16 text-center text-gray-400 text-sm">No differences found in this section.</div>`;
+    return;
+  }
+
+  const fileHeaders = vf.map((f, i) => {
+    const soaTitle = state.soaSections[i]?.[state.selectedSoaIdxs[i] ?? 0]?.title || '';
+    return `<th class="px-3 py-2.5 text-left text-xs font-semibold text-gray-500">
+      <div class="flex items-center gap-1.5 whitespace-nowrap">
+        <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-bold ${labelClass(i)}">${esc(fileLabel(i))}</span>
+        <span class="font-normal text-gray-500">${esc(displayName(f.name))}</span>
+      </div>
+      ${soaTitle ? `<div class="mt-0.5 text-gray-400 font-normal text-[11px] whitespace-nowrap">${esc(soaTitle)}</div>` : ''}
+    </th>`;
+  }).join('');
+
+  const tableRows = rows.map(row => {
+    if (row.isGroupHeader) {
+      return `<tr class="diff-row">
+        <td colspan="${totalCols}" class="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide" style="background:#F1F5F9">
+          ${esc(row.location)}
+        </td>
+      </tr>`;
+    }
+
+    // Majority value for 'changed' rows (for highlight logic)
+    let majorityStr = null;
+    if (row.changeType === 'changed') {
+      const freq = new Map();
+      for (const v of row.values) { const k = String(v ?? ''); freq.set(k, (freq.get(k)||0)+1); }
+      let max = 0;
+      for (const [k,f] of freq) if (f > max) { max = f; majorityStr = k; }
+    }
+
+    let badge;
+    if (row.changeType === 'present') {
+      badge = `<span class="px-2 py-0.5 rounded-full text-xs font-medium" style="background:#F1F5F9;color:#64748B">Match</span>`;
+    } else if (row.category === 'Activity Group' && (row.changeType === 'added' || row.changeType === 'removed')) {
+      const presentLabels = row.values.map((v, i) => v !== null ? `Study ${fileLabel(i)}` : null).filter(Boolean);
+      badge = `<span class="px-2 py-0.5 rounded-full text-xs font-medium" style="background:#EFF6FF;color:#1D4ED8">Only in ${esc(presentLabels.join(' & '))}</span>`;
+    } else if (row.changeType === 'added') {
+      badge = `<span class="px-2 py-0.5 rounded-full text-xs font-medium" style="background:#DCFCE7;color:#166534">Added</span>`;
+    } else if (row.changeType === 'removed') {
+      badge = `<span class="px-2 py-0.5 rounded-full text-xs font-medium" style="background:#FEE2E2;color:#991B1B">Removed</span>`;
+    } else if (row.changeType === 'updated') {
+      badge = `<span class="px-2 py-0.5 rounded-full text-xs font-medium" style="background:#FEF3C7;color:#92400E">Rule updated</span>`;
+    } else if (row.changeType === 'moved') {
+      badge = `<span class="px-2 py-0.5 rounded-full text-xs font-medium" style="background:#EDE9FE;color:#6D28D9">Moved</span>`;
+    } else {
+      badge = `<span class="px-2 py-0.5 rounded-full text-xs font-medium" style="background:#FEF3C7;color:#92400E">Changed</span>`;
+    }
+
+    const valueCells = vf.map((_, i) => {
+      const v = row.values[i];
+      const absent = v === null || v === undefined;
+      if (absent) return `<td class="px-3 py-2.5 text-xs val-absent">—</td>`;
+      const text = esc(displayVal(v));
+      let cls = '';
+      if (row.changeType === 'present')          cls = 'val-match';
+      else if (row.changeType === 'added')       cls = 'val-added';
+      else if (row.changeType === 'removed')     cls = 'val-removed';
+      else if (row.changeType === 'updated')     cls = 'val-changed'; // both sides shown in amber
+      else if (row.changeType === 'moved')       cls = 'val-moved';  // both sides shown in purple
+      else if (row.changeType === 'changed')     cls = String(v ?? '') === majorityStr ? 'val-match' : 'val-changed';
+      return `<td class="px-3 py-2.5 text-xs ${cls} max-w-xs break-words">${text}</td>`;
+    }).join('');
+
+    const epochDayCell = showEpochDay
+      ? (row.epochDay != null
+          ? `<td class="px-3 py-2.5 text-xs text-gray-500 whitespace-nowrap">${esc(String(row.epochDay))}</td>`
+          : `<td class="px-3 py-2.5 text-xs val-absent">—</td>`)
+      : '';
+
+    return `<tr class="row-${row.changeType} diff-row border-t border-gray-100/60">
+      <td class="px-3 py-2.5 text-xs text-gray-400 whitespace-nowrap">${esc(row.category)}</td>
+      <td class="px-3 py-2.5 text-xs text-gray-600 max-w-[240px] break-words">${esc(row.location)}</td>
+      ${epochDayCell}
+      <td class="px-3 py-2.5 text-xs text-gray-500 whitespace-nowrap mono">${esc(row.field)}</td>
+      ${valueCells}
+      <td class="px-3 py-2.5 text-xs whitespace-nowrap">${badge}</td>
+    </tr>`;
+  }).join('');
+
+  content.innerHTML = activityDisclaimer + `
+    <table class="w-full border-collapse">
+      <thead class="sticky top-0 z-10 bg-white">
+        <tr class="border-b border-gray-200">
+          <th class="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">Category</th>
+          <th class="px-3 py-2.5 text-left text-xs font-semibold text-gray-500">Location</th>
+          ${showEpochDay ? `<th class="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">Epoch Day</th>` : ''}
+          <th class="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 mono">Field</th>
+          ${fileHeaders}
+          <th class="px-3 py-2.5 text-left text-xs font-semibold text-gray-500">Change</th>
+        </tr>
+      </thead>
+      <tbody>${tableRows}</tbody>
+    </table>`;
+}
+
+// ================================================================
+// CLIPBOARD
+// ================================================================
+function buildClipboard() {
+  const vf = validFiles();
+  const rows = getTabRows(state.activeTab).filter(r => !r.isGroupHeader);
+  const tabLabel = TABS.find(t => t.id === state.activeTab)?.label || state.activeTab;
+  const L = [];
+  L.push(`=== FSD SOA DIFF — ${tabLabel.toUpperCase()} ===`);
+  L.push('Files:');
+  vf.forEach((f, i) => L.push(`  ${fileLabel(i)}: ${displayName(f.name)}`));
+  L.push('');
+  const p = (s, w) => String(s ?? '—').slice(0,w).padEnd(w);
+  const N = vf.length;
+  const hdr = `${p('Category',16)} ${p('Location',36)} ${p('Field',20)} ${vf.map((_,i)=>p(fileLabel(i),24)).join(' ')} Change`;
+  L.push(hdr);
+  L.push('─'.repeat(hdr.length));
+  for (const row of rows) {
+    L.push(`${p(row.category,16)} ${p(row.location,36)} ${p(row.field,20)} ${vf.map((_,i)=>p(displayVal(row.values[i]),24)).join(' ')} ${row.changeType}`);
+  }
+  L.push('');
+  L.push('=== END ===');
+  return L.join('\n');
+}
+
+// ================================================================
+// FILE UPLOAD
+// ================================================================
+function processFiles(fileList) {
+  Array.from(fileList).forEach(file => {
+    if (state.files.length >= 5) return;
+    if (!/\.json$/i.test(file.name) && file.type !== 'application/json') return;
+    if (state.files.some(f => f.name === file.name)) return;
+    const entry = { id: Date.now() + Math.random(), name: file.name, size: file.size, parsed: null, error: null };
+    state.files.push(entry);
+    const reader = new FileReader();
+    reader.onload = e => {
+      try { entry.parsed = JSON.parse(e.target.result); entry.error = null; }
+      catch { entry.error = 'Invalid JSON'; }
+      renderFilePills();
+      syncControls();
+    };
+    reader.readAsText(file);
+  });
+  renderFilePills();
+  syncControls();
+}
+
+function renderFilePills() {
+  const list = document.getElementById('file-list');
+  if (!state.files.length) {
+    document.getElementById('upload-right').classList.add('hidden');
+    return;
+  }
+  document.getElementById('upload-right').classList.remove('hidden');
+  list.innerHTML = state.files.map((f, i) => {
+    const hasError = !!f.error;
+    const isLoading = !f.parsed && !f.error;
+    return `<div class="flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs ${hasError ? 'border-red-200 bg-red-50' : isLoading ? 'border-gray-200 bg-gray-50' : 'border-gray-200 bg-white'}">
+      <span class="px-1.5 py-0.5 rounded font-bold text-xs ${labelClass(i)}">${esc(fileLabel(i))}</span>
+      <span class="font-medium text-gray-700 max-w-[140px] truncate" title="${esc(f.name)}">${esc(displayName(f.name))}</span>
+      <span class="text-gray-400">${fmtSize(f.size)}</span>
+      ${hasError ? `<span class="text-red-500">${esc(f.error)}</span>` : ''}
+      <button data-remove-file="${f.id}" class="ml-1 text-gray-300 hover:text-gray-500 transition-colors">
+        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>`;
+  }).join('');
+}
+
+function syncControls() {
+  const valid = validFiles();
+  const controls = document.getElementById('controls');
+  const soaPicker = document.getElementById('soa-picker');
+
+  if (!state.files.length) {
+    document.getElementById('upload-right').classList.add('hidden');
+    controls.classList.add('hidden');
+    return;
+  }
+  document.getElementById('upload-right').classList.remove('hidden');
+  controls.classList.remove('hidden');
+
+  if (valid.length >= 2) {
+    state.soaSections = valid.map(f => extractSoaSections(f.parsed));
+    const needsPicker = state.soaSections.some(secs => secs.length > 1);
+
+    // Always show picker so users can see/change which SOA is selected per file
+    soaPicker.classList.remove('hidden');
+    soaPicker.innerHTML = `<div class="text-xs font-medium text-gray-500 mb-2 uppercase tracking-wide">SOA section</div>
+      <div class="flex flex-col gap-1.5">` +
+      valid.map((f, fi) => {
+        const secs = state.soaSections[fi];
+        const onlyOne = secs.length <= 1;
+        const currentIdx = state.selectedSoaIdxs[fi] ?? 0;
+        return `<div class="flex items-center gap-1.5 min-w-0">
+          <span class="px-1.5 py-0.5 rounded text-xs font-bold flex-shrink-0 ${labelClass(fi)}">${esc(fileLabel(fi))}</span>
+          <select name="soa-pick-${fi}"
+            class="w-auto text-xs rounded-lg border border-gray-200 bg-white px-2 py-1 text-gray-700 focus:outline-none focus:ring-1 focus:ring-gray-400 transition-colors ${onlyOne ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:border-gray-300'}"
+            ${onlyOne ? 'disabled' : ''}
+            style="max-width:min(280px,calc(100% - 2rem));box-shadow:0 1px 0 rgba(0,0,0,.04)">
+            ${secs.map((sec, si) => `<option value="${si}" ${si===currentIdx?'selected':''}>${esc(sec.title)}</option>`).join('')}
+            ${secs.length === 0 ? `<option disabled>No SOA found</option>` : ''}
+          </select>
+        </div>`;
+      }).join('') + `</div>`;
+
+    const allHaveSoa = state.soaSections.every(secs => secs.length > 0);
+    document.getElementById('compare-btn').disabled = !allHaveSoa;
+  } else {
+    soaPicker.classList.add('hidden');
+    document.getElementById('compare-btn').disabled = true;
+  }
+}
+
+function doCompare() {
+  const vf = validFiles();
+  if (vf.length < 2) return;
+
+  state.soaSections = vf.map(f => extractSoaSections(f.parsed));
+  state.selectedSoaIdxs = vf.map((_, fi) => {
+    const sel = document.querySelector(`select[name="soa-pick-${fi}"]`);
+    return sel ? parseInt(sel.value, 10) : 0;
+  });
+
+  const soas = vf.map((_, fi) => state.soaSections[fi]?.[state.selectedSoaIdxs[fi]]?.soa || null);
+
+  if (soas.some(s => s === null)) {
+    const missing = vf.filter((_, fi) => !soas[fi]).map((f,_) => displayName(f.name)).join(', ');
+    alert(`No Schedule of Activities section found in: ${missing}`);
+    return;
+  }
+
+  state.diffResult = runSoaDiff(soas);
+  state.activeTab = 'all';
+  state.compareRan = true;
+
+  document.getElementById('results-section').classList.remove('hidden');
+  renderResults();
+  document.getElementById('results-section').scrollIntoView({ behavior: 'smooth' });
+}
+
+// ================================================================
+// EVENT LISTENERS
+// ================================================================
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('keydown', e => { if (e.key==='Enter'||e.key===' ') fileInput.click(); });
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('border-blue-400','bg-blue-50/40'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('border-blue-400','bg-blue-50/40'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('border-blue-400','bg-blue-50/40');
+  processFiles(e.dataTransfer.files);
+});
+fileInput.addEventListener('change', e => { processFiles(e.target.files); fileInput.value = ''; });
+
+document.getElementById('file-list').addEventListener('click', e => {
+  const btn = e.target.closest('[data-remove-file]');
+  if (!btn) return;
+  const id = parseFloat(btn.dataset.removeFile);
+  state.files = state.files.filter(f => f.id !== id);
+  if (!state.files.length) {
+    state.compareRan = false;
+    state.diffResult = null;
+    document.getElementById('results-section').classList.add('hidden');
+  }
+  renderFilePills();
+  syncControls();
+});
+
+document.getElementById('compare-btn').addEventListener('click', doCompare);
+
+document.getElementById('clear-btn').addEventListener('click', () => {
+  state.files = [];
+  state.soaSections = [];
+  state.selectedSoaIdxs = [];
+  state.diffResult = null;
+  state.compareRan = false;
+  state.activeTab = 'all';
+  fileInput.value = '';
+  document.getElementById('results-section').classList.add('hidden');
+  document.getElementById('upload-right').classList.add('hidden');
+  document.getElementById('controls').classList.add('hidden');
+  renderFilePills();
+});
+
+document.getElementById('tab-bar').addEventListener('click', e => {
+  const btn = e.target.closest('[data-tab]');
+  if (!btn) return;
+  state.activeTab = btn.dataset.tab;
+  renderResults();
+});
+
+document.getElementById('copy-btn').addEventListener('click', () => {
+  const text = buildClipboard();
+  const btn = document.getElementById('copy-btn');
+  const orig = btn.innerHTML;
+  const fallback = () => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    Object.assign(ta.style, { position:'fixed', top:'-9999px', left:'-9999px' });
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch {}
+    document.body.removeChild(ta);
+  };
+  (navigator.clipboard ? navigator.clipboard.writeText(text).catch(fallback) : Promise.resolve(fallback()))
+    .finally(() => {
+      btn.innerHTML = `<svg class="w-3.5 h-3.5 text-green-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg> Copied!`;
+      toast('Copied!');
+      setTimeout(() => { btn.innerHTML = orig; }, 2000);
+    });
+});
+</script>
+</body>
+</html>
