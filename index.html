@@ -1005,6 +1005,84 @@ function matchItemsNWay(itemsPerFile, getId, getNorm) {
   return groups;
 }
 
+const FUZZY_THRESHOLD = 0.80; // raise toward 0.85–0.90 if false pairings appear
+
+// Character-level Dice coefficient on bigrams — no external library needed
+function diceSimilarity(a, b) {
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  const bigrams = s => {
+    const m = new Map();
+    for (let i = 0; i < s.length - 1; i++) {
+      const bg = s.slice(i, i + 2);
+      m.set(bg, (m.get(bg) || 0) + 1);
+    }
+    return m;
+  };
+  const bgA = bigrams(a), bgB = bigrams(b);
+  let inter = 0;
+  for (const [bg, count] of bgA) inter += Math.min(count, bgB.get(bg) || 0);
+  const total = (a.length - 1) + (b.length - 1);
+  return total <= 0 ? 0 : (2 * inter) / total;
+}
+
+// Match items by exact normalized content, then fuzzy (N=2), then add/remove remainder.
+// Replaces matchItemsNWay for objectives/estimands/endpoints where id is not a reliable signal.
+function matchByNormThenFuzzy(itemsPerFile, getNorm) {
+  const n = itemsPerFile.length;
+  const assigned = itemsPerFile.map(() => new Set());
+  const groups = [];
+
+  // Step 1: exact norm match
+  const allNorms = new Set();
+  itemsPerFile.forEach((arr, fi) => arr.forEach((it, i) => {
+    if (!assigned[fi].has(i)) { const norm = getNorm(it); if (norm) allNorms.add(norm); }
+  }));
+  for (const norm of allNorms) {
+    const found = itemsPerFile.map((arr, fi) => {
+      const idx = arr.findIndex((it, i) => !assigned[fi].has(i) && getNorm(it) === norm);
+      return idx >= 0 ? { idx, item: arr[idx] } : null;
+    });
+    // Only exact-match if the norm appears in 2+ files; otherwise leave for fuzzy step
+    if (found.filter(v => v !== null).length >= 2) {
+      found.forEach((v, fi) => { if (v) assigned[fi].add(v.idx); });
+      groups.push({ values: found.map(v => v ? v.item : null) });
+    }
+  }
+
+  // Collect unmatched
+  const unmatched = itemsPerFile.map((arr, fi) =>
+    arr.map((item, i) => ({ item, idx: i })).filter(({ idx }) => !assigned[fi].has(idx))
+  );
+
+  // Step 2: fuzzy match — greedy by descending score (N=2 only)
+  if (n === 2 && unmatched[0].length > 0 && unmatched[1].length > 0) {
+    const candidates = [];
+    for (let i = 0; i < unmatched[0].length; i++) {
+      for (let j = 0; j < unmatched[1].length; j++) {
+        const score = diceSimilarity(getNorm(unmatched[0][i].item), getNorm(unmatched[1][j].item));
+        if (score >= FUZZY_THRESHOLD) candidates.push({ i, j, score });
+      }
+    }
+    candidates.sort((a, b) => b.score - a.score);
+    const usedI = new Set(), usedJ = new Set();
+    for (const { i, j } of candidates) {
+      if (usedI.has(i) || usedJ.has(j)) continue;
+      usedI.add(i); usedJ.add(j);
+      groups.push({ values: [unmatched[0][i].item, unmatched[1][j].item] });
+    }
+    unmatched[0].forEach(({ item }, i) => { if (!usedI.has(i)) groups.push({ values: [item, null] }); });
+    unmatched[1].forEach(({ item }, j) => { if (!usedJ.has(j)) groups.push({ values: [null, item] }); });
+  } else {
+    // N > 2 or only one side unmatched — emit individually
+    for (let fi = 0; fi < n; fi++)
+      for (const { item } of unmatched[fi])
+        groups.push({ values: itemsPerFile.map((_, fi2) => fi2 === fi ? item : null) });
+  }
+
+  return groups;
+}
+
 // Positional text diff (for ordered lists / paragraphs where position is meaningful)
 function diffTextItems(itemsPerFile, sectionTitle, locationPrefix) {
   const maxLen = Math.max(0, ...itemsPerFile.map(a => a.length));
@@ -1096,6 +1174,10 @@ function diffObjectivesAndEndpoints(parsedFiles) {
           id: o.id || null,
           norm: normalizeText(o.content || ''),
           raw: decodeAndStrip(o.content || '').replace(/\s+/g, ' ').trim(),
+          estimands: (o.estimands || []).map(e => ({
+            norm: normalizeText(e.content || ''),
+            raw: decodeAndStrip(e.content || '').replace(/\s+/g, ' ').trim(),
+          })),
           endpoints: (o.endpoints || []).map(e => ({
             id: e.id || null,
             norm: normalizeText(e.content || ''),
@@ -1144,7 +1226,7 @@ function diffObjectivesAndEndpoints(parsedFiles) {
   for (const typeId of allTypeIds) {
     const typeName = parsedFiles.map((_, fi) => perFileByType[fi].get(typeId)?.typeName).find(Boolean) || typeId;
     const objsPerFile = parsedFiles.map((_, fi) => perFileByType[fi].get(typeId)?.objectives || []);
-    const objGroups = matchItemsNWay(objsPerFile, () => null, o => o.norm);
+    const objGroups = matchByNormThenFuzzy(objsPerFile, o => o.norm);
 
     for (const { values: objVals } of objGroups) {
       const rep = objVals.find(v => v !== null);
@@ -1160,19 +1242,30 @@ function diffObjectivesAndEndpoints(parsedFiles) {
 
       rows.push({ category: sectionTitle, location: objLocation, field: 'objective', values: rawVals, changeType: ct });
 
-      // Match endpoints within this objective pair (only when objective is present in multiple files)
+      // Estimands and endpoints within this objective (field-type scoped, hierarchy scoped)
       if (ct !== 'added' && ct !== 'removed') {
+        // Estimands first (sit between objective and endpoints in the table)
+        const estPerFile = objVals.map(v => v ? (v.estimands || []) : []);
+        for (const { values: estVals } of matchByNormThenFuzzy(estPerFile, e => e.norm)) {
+          const repEst = estVals.find(v => v !== null);
+          if (!repEst) continue;
+          const estRawVals = estVals.map(v => v ? v.raw : null);
+          const estPreview = repEst.raw.slice(0, 40) + (repEst.raw.length > 40 ? '…' : '');
+          rows.push({ category: sectionTitle,
+            location: `${objLocation} › ${estPreview}`,
+            field: 'estimand', values: estRawVals, changeType: rowChangeType(estRawVals) || 'present' });
+        }
+
+        // Endpoints
         const epsPerFile = objVals.map(v => v ? v.endpoints : []);
-        const epGroups = matchItemsNWay(epsPerFile, () => null, e => e.norm);
-        for (const { values: epVals } of epGroups) {
+        for (const { values: epVals } of matchByNormThenFuzzy(epsPerFile, e => e.norm)) {
           const repEp = epVals.find(v => v !== null);
           if (!repEp) continue;
           const epRawVals = epVals.map(v => v ? v.raw : null);
-          const epCt = rowChangeType(epRawVals) || 'present';
           const epPreview = repEp.raw.slice(0, 40) + (repEp.raw.length > 40 ? '…' : '');
           rows.push({ category: sectionTitle,
             location: `${objLocation} › ${epPreview}`,
-            field: 'endpoint', values: epRawVals, changeType: epCt });
+            field: 'endpoint', values: epRawVals, changeType: rowChangeType(epRawVals) || 'present' });
         }
       }
     }
@@ -1377,9 +1470,22 @@ function renderResults() {
           : `<td class="px-3 py-2.5 text-xs val-absent">—</td>`)
       : '';
 
+    // Two-tone location for O&E rows: type label prominent, content segments muted
+    const locationHtml = (() => {
+      if (row.category === 'Objectives & Endpoints' && row.location.includes(' › ') && !row.location.includes(' → ')) {
+        const parts = row.location.split(' › ');
+        return parts.map((p, idx) =>
+          idx === 0
+            ? `<span class="text-gray-800 font-medium">${esc(p)}</span>`
+            : `<span class="text-gray-400">${esc(p)}</span>`
+        ).join(`<span class="text-gray-300 mx-0.5"> › </span>`);
+      }
+      return `<span class="text-gray-600">${esc(row.location)}</span>`;
+    })();
+
     return `<tr class="row-${row.changeType} diff-row border-t border-gray-100/60 align-top">
       <td class="px-3 py-2.5 text-xs text-gray-400 break-words">${esc(row.category)}</td>
-      <td class="px-3 py-2.5 text-xs text-gray-600 break-words">${esc(row.location)}</td>
+      <td class="px-3 py-2.5 text-xs break-words">${locationHtml}</td>
       ${epochDayCell}
       <td class="px-3 py-2.5 text-xs text-gray-500 mono break-words">${esc(row.field)}</td>
       ${valueCells}
