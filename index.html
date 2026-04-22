@@ -1174,10 +1174,12 @@ function diffObjectivesAndEndpoints(parsedFiles) {
           id: o.id || null,
           norm: normalizeText(o.content || ''),
           raw: decodeAndStrip(o.content || '').replace(/\s+/g, ' ').trim(),
-          estimands: (o.estimands || []).map(e => ({
-            norm: normalizeText(e.content || ''),
-            raw: decodeAndStrip(e.content || '').replace(/\s+/g, ' ').trim(),
-          })),
+          estimand: o.estimand ? {
+            treatment:            { norm: normalizeText(o.estimand.treatment || ''),            raw: decodeAndStrip(o.estimand.treatment || '').replace(/\s+/g, ' ').trim() },
+            analysisPopulation:   { norm: normalizeText(o.estimand.analysisPopulation || ''),   raw: decodeAndStrip(o.estimand.analysisPopulation || '').replace(/\s+/g, ' ').trim() },
+            variableOfInterest:   { norm: normalizeText(o.estimand.variableOfInterest || ''),   raw: decodeAndStrip(o.estimand.variableOfInterest || '').replace(/\s+/g, ' ').trim() },
+            intercurrentEvents:   { norm: normalizeText(o.estimand.intercurrentEvents || ''),   raw: decodeAndStrip(o.estimand.intercurrentEvents || '').replace(/\s+/g, ' ').trim() },
+          } : null,
           endpoints: (o.endpoints || []).map(e => ({
             id: e.id || null,
             norm: normalizeText(e.content || ''),
@@ -1244,16 +1246,17 @@ function diffObjectivesAndEndpoints(parsedFiles) {
 
       // Estimands and endpoints within this objective (field-type scoped, hierarchy scoped)
       if (ct !== 'added' && ct !== 'removed') {
-        // Estimands first (sit between objective and endpoints in the table)
-        const estPerFile = objVals.map(v => v ? (v.estimands || []) : []);
-        for (const { values: estVals } of matchByNormThenFuzzy(estPerFile, e => e.norm)) {
-          const repEst = estVals.find(v => v !== null);
-          if (!repEst) continue;
-          const estRawVals = estVals.map(v => v ? v.raw : null);
-          const estPreview = repEst.raw.slice(0, 40) + (repEst.raw.length > 40 ? '…' : '');
-          rows.push({ category: sectionTitle,
-            location: `${objLocation} › ${estPreview}`,
-            field: 'estimand', values: estRawVals, changeType: rowChangeType(estRawVals) || 'present' });
+        // Estimand sub-fields (singular estimand object, four named sub-fields)
+        const estSubFields = ['treatment', 'analysisPopulation', 'variableOfInterest', 'intercurrentEvents'];
+        const hasAnyEstimand = objVals.some(v => v?.estimand);
+        if (hasAnyEstimand) {
+          for (const subField of estSubFields) {
+            const subVals = objVals.map(v => v?.estimand?.[subField]?.raw ?? null);
+            if (subVals.every(v => !v)) continue; // skip when all sides are empty
+            rows.push({ category: sectionTitle,
+              location: `${objLocation} › Estimand › ${subField}`,
+              field: 'estimand', values: subVals, changeType: rowChangeType(subVals) || 'present' });
+          }
         }
 
         // Endpoints
@@ -1494,14 +1497,14 @@ function renderResults() {
   }).join('');
 
   // Column widths: narrow fixed cols + location + equal-share value cols
-  const narrowPct = 8, locationPct = 20;
-  const fixedPct = narrowPct * (3 + (showEpochDay ? 1 : 0)) + locationPct;
+  const narrowPct = 8, fieldPct = 11, locationPct = 20;
+  const fixedPct = narrowPct * (2 + (showEpochDay ? 1 : 0)) + fieldPct + locationPct;
   const valuePct = Math.floor((100 - fixedPct) / vf.length);
   const colgroup = `<colgroup>
     <col style="width:${narrowPct}%">
     <col style="width:${locationPct}%">
     ${showEpochDay ? `<col style="width:${narrowPct}%">` : ''}
-    <col style="width:${narrowPct}%">
+    <col style="width:${fieldPct}%">
     ${vf.map(() => `<col style="width:${valuePct}%">`).join('')}
     <col style="width:${narrowPct}%">
   </colgroup>`;
