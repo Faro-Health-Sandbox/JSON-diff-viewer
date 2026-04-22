@@ -87,6 +87,14 @@
           </svg>
           Compare SOA
         </button>
+        <button id="compare-other-btn"
+          class="flex items-center gap-2 px-3 py-1.5 bg-[#1a1a1a] hover:bg-[#2a2a2a] active:bg-[#111] text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          style="box-shadow:0 1px 0 rgba(0,0,0,.08),inset 0 -1px 0 rgba(0,0,0,.2)">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08M15.75 18.75v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5A3.375 3.375 0 006.375 7.5H5.25m11.9-3.664A2.251 2.251 0 0015 2.25h-1.5a2.251 2.251 0 00-2.15 1.586m5.8 0c.065.21.1.433.1.664v.75h-6V4.5c0-.231.035-.454.1-.664M6.75 7.5H4.875c-.621 0-1.125.504-1.125 1.125v12c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V16.5a9 9 0 00-9-9z"/>
+          </svg>
+          Compare Other Sections
+        </button>
         <button id="clear-btn"
           class="px-3 py-1.5 text-sm text-gray-700 font-medium bg-white hover:bg-gray-50 active:bg-gray-100 border border-gray-300 rounded-lg transition-colors"
           style="box-shadow:0 1px 0 rgba(0,0,0,.08)">
@@ -142,6 +150,8 @@ const state = {
   activeTab: 'all',
   diffResult: null,     // { epochs, groups, activities, rules, days, footnotes }
   compareRan: false,
+  compareMode: 'soa',       // 'soa' | 'other'
+  otherDiffResult: null,    // { tabs, byTab }
 };
 
 // ================================================================
@@ -192,10 +202,10 @@ function toast(msg = 'Done!', ms = 2500) {
 function displayVal(val) {
   if (val === null || val === undefined) return '—';
   if (isEncrypted(val)) return '[encrypted]';
-  if (isHtml(val)) return stripHtml(val).slice(0,120) || '[rich text]';
+  if (isHtml(val)) return stripHtml(val) || '[rich text]';
   if (typeof val === 'boolean') return String(val);
   if (typeof val === 'number') return String(val);
-  if (typeof val === 'string') return val.length > 120 ? val.slice(0,120) + '…' : val;
+  if (typeof val === 'string') return val;
   if (Array.isArray(val)) return `[${val.length} items]`;
   if (typeof val === 'object') {
     const name = val.name ?? val.title ?? val.label ?? null;
@@ -910,6 +920,295 @@ function runSoaDiff(soas) {
 }
 
 // ================================================================
+// OTHER SECTIONS DIFF ENGINE
+// ================================================================
+
+// Decode all HTML entities (named + numeric) AND strip tags via the browser parser.
+// This is the canonical normalizer for matching — do not use stripHtml() for comparisons.
+function decodeAndStrip(html) {
+  const div = document.createElement('div');
+  div.innerHTML = String(html || '');
+  return div.textContent || div.innerText || '';
+}
+
+function normalizeText(str) {
+  return decodeAndStrip(str).replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function rowChangeType(values) {
+  if (values.every(v => v === null || v === undefined)) return null;
+  const hasNull = values.some(v => v === null || v === undefined);
+  if (!hasNull && allEq(values)) return 'present';
+  if (hasNull) return (values[0] === null || values[0] === undefined) ? 'added' : 'removed';
+  return 'changed';
+}
+
+function splitTextSection(html) {
+  const str = String(html || '');
+  if (!str.trim()) return [];
+  const liMatches = [...str.matchAll(/<li[^>]*>([\s\S]*?)(?:<\/li>|(?=<li)|$)/gi)]
+    .map(m => decodeAndStrip(m[1]).replace(/\s+/g, ' ').trim()).filter(Boolean);
+  if (liMatches.length > 0) return liMatches;
+  return [...str.matchAll(/<p[^>]*>([\s\S]*?)(?:<\/p>|$)/gi)]
+    .map(m => decodeAndStrip(m[1]).replace(/\s+/g, ' ').trim()).filter(Boolean);
+}
+
+function findSectionByType(sections, type) {
+  for (const sec of (sections || [])) {
+    if (sec?.type === type) return sec;
+    const found = findSectionByType(sec?.sections, type) || findSectionByType(sec?.children, type);
+    if (found) return found;
+  }
+  return null;
+}
+
+// N-way item matching: match by id first, then by normalized content, then emit unmatched
+function matchItemsNWay(itemsPerFile, getId, getNorm) {
+  const n = itemsPerFile.length;
+  const assigned = itemsPerFile.map(() => new Set());
+  const groups = [];
+
+  // Step 1: match by id
+  const allIds = new Set();
+  itemsPerFile.forEach((arr, fi) => arr.forEach(it => { const id = getId(it); if (id) allIds.add(id); }));
+  for (const id of allIds) {
+    const values = itemsPerFile.map((arr, fi) => {
+      const idx = arr.findIndex((it, i) => !assigned[fi].has(i) && getId(it) === id);
+      if (idx >= 0) { assigned[fi].add(idx); return arr[idx]; }
+      return null;
+    });
+    if (values.some(v => v !== null)) groups.push({ key: `id:${id}`, values });
+  }
+
+  // Step 2: match remaining by normalized content
+  const allNorms = new Set();
+  itemsPerFile.forEach((arr, fi) => arr.forEach((it, i) => {
+    if (!assigned[fi].has(i)) { const norm = getNorm(it); if (norm) allNorms.add(norm); }
+  }));
+  for (const norm of allNorms) {
+    const values = itemsPerFile.map((arr, fi) => {
+      const idx = arr.findIndex((it, i) => !assigned[fi].has(i) && getNorm(it) === norm);
+      if (idx >= 0) { assigned[fi].add(idx); return arr[idx]; }
+      return null;
+    });
+    if (values.some(v => v !== null)) groups.push({ key: `norm:${norm}`, values });
+  }
+
+  // Step 3: remaining unmatched items
+  itemsPerFile.forEach((arr, fi) => arr.forEach((it, i) => {
+    if (!assigned[fi].has(i)) {
+      const values = itemsPerFile.map((_, fi2) => fi2 === fi ? it : null);
+      groups.push({ key: `uniq:${fi}:${i}`, values });
+    }
+  }));
+
+  return groups;
+}
+
+// Positional text diff (for ordered lists / paragraphs where position is meaningful)
+function diffTextItems(itemsPerFile, sectionTitle, locationPrefix) {
+  const maxLen = Math.max(0, ...itemsPerFile.map(a => a.length));
+  const rows = [];
+  for (let i = 0; i < maxLen; i++) {
+    const values = itemsPerFile.map(a => (i < a.length ? a[i] : null));
+    const ct = rowChangeType(values) || 'present';
+    rows.push({ category: sectionTitle, location: `${locationPrefix} ${i + 1}`, field: 'content', values, changeType: ct });
+  }
+  return rows;
+}
+
+function diffSingleTextSection(parsedFiles, type, sectionTitle, locationPrefix) {
+  const sections = parsedFiles.map(p => findSectionByType(p?.sections, type));
+  if (sections.every(s => !s)) return [];
+  if (sections.some(s => !s)) {
+    return [{ category: sectionTitle, location: '(entire section)', field: '—',
+      values: sections.map(s => s ? '[present]' : null),
+      changeType: rowChangeType(sections.map(s => s ? 'x' : null)) }];
+  }
+  return diffTextItems(sections.map(s => splitTextSection(s.summaryTextContent)), sectionTitle, locationPrefix);
+}
+
+function diffTopLevelTextSection(parsedFiles, topKey, sectionTitle) {
+  const sections = parsedFiles.map(p => p?.[topKey] || null);
+  if (sections.every(s => !s)) return [];
+  if (sections.some(s => !s)) {
+    return [{ category: sectionTitle, location: '(entire section)', field: '—',
+      values: sections.map(s => s ? '[present]' : null),
+      changeType: rowChangeType(sections.map(s => s ? 'x' : null)) }];
+  }
+  const items = sections.map(s => splitTextSection(s.summaryTextContent));
+  const hasList = items.some(a => a.length > 1);
+  return diffTextItems(items, sectionTitle, hasList ? 'Item' : 'Paragraph');
+}
+
+function diffTopLevelTextSectionWhole(parsedFiles, topKey, sectionTitle) {
+  const sections = parsedFiles.map(p => p?.[topKey] || null);
+  if (sections.every(s => !s)) return [];
+  if (sections.some(s => !s)) {
+    return [{ category: sectionTitle, location: '(entire section)', field: '—',
+      values: sections.map(s => s ? '[present]' : null),
+      changeType: rowChangeType(sections.map(s => s ? 'x' : null)) }];
+  }
+  const values = sections.map(s => decodeAndStrip(s.summaryTextContent || '').replace(/\s+/g, ' ').trim() || null);
+  const ct = rowChangeType(values) || 'present';
+  return [{ category: sectionTitle, location: 'Full text', field: 'content', values, changeType: ct }];
+}
+
+function diffPopulationSection(parsedFiles) {
+  const sectionTitle = 'Population';
+  const sections = parsedFiles.map(p => findSectionByType(p?.sections, 'population-section'));
+  if (sections.every(s => !s)) return [];
+  if (sections.some(s => !s)) {
+    return [{ category: sectionTitle, location: '(entire section)', field: '—',
+      values: sections.map(s => s ? '[present]' : null),
+      changeType: rowChangeType(sections.map(s => s ? 'x' : null)) }];
+  }
+  const rows = [];
+  rows.push(...diffTextItems(sections.map(s => splitTextSection(s.summaryTextContent)), sectionTitle, 'Paragraph'));
+  const nameVals = sections.map(s => s.population?.name ?? null);
+  rows.push({ category: sectionTitle, location: 'Population', field: 'name', values: nameVals, changeType: rowChangeType(nameVals) || 'present' });
+  const sizeVals = sections.map(s => s.population?.size != null ? String(s.population.size) : null);
+  rows.push({ category: sectionTitle, location: 'Population', field: 'size', values: sizeVals, changeType: rowChangeType(sizeVals) || 'present' });
+  return rows;
+}
+
+function diffObjectivesAndEndpoints(parsedFiles) {
+  const sectionTitle = 'Objectives & Endpoints';
+  const n = parsedFiles.length;
+  const sections = parsedFiles.map(p => findSectionByType(p?.sections, 'objectives-and-endpoints-section'));
+  if (sections.every(s => !s)) return [];
+  if (sections.some(s => !s)) {
+    return [{ category: sectionTitle, location: '(entire section)', field: '—',
+      values: sections.map(s => s ? '[present]' : null),
+      changeType: rowChangeType(sections.map(s => s ? 'x' : null)) }];
+  }
+
+  const rows = [];
+
+  // Build per-file type maps: typeId → { typeName, objectives[] }
+  const perFileByType = sections.map(sec => {
+    const m = new Map();
+    for (const g of (sec.objectivesAndEndpoints || [])) {
+      const tid = g.type?.id || 'unknown';
+      m.set(tid, {
+        typeName: g.type?.name || tid,
+        objectives: (g.objectives || []).map(o => ({
+          id: o.id || null,
+          norm: normalizeText(o.content || ''),
+          raw: decodeAndStrip(o.content || '').replace(/\s+/g, ' ').trim(),
+          endpoints: (o.endpoints || []).map(e => ({
+            id: e.id || null,
+            norm: normalizeText(e.content || ''),
+            raw: decodeAndStrip(e.content || '').replace(/\s+/g, ' ').trim(),
+          })),
+        })),
+      });
+    }
+    return m;
+  });
+
+  // Detect cross-type moves (N=2 only)
+  const crossTypeSkip = new Set(); // 'fi:typeId:norm'
+  if (n === 2) {
+    for (const t0 of perFileByType[0].keys()) {
+      for (const t1 of perFileByType[1].keys()) {
+        if (t0 === t1) continue;
+        const objs0 = perFileByType[0].get(t0)?.objectives || [];
+        const objs1 = perFileByType[1].get(t1)?.objectives || [];
+        for (const o0 of objs0) {
+          const match = objs1.find(o1 =>
+            (o0.norm && o0.norm === o1.norm && o0.norm !== ''));
+          if (match && !crossTypeSkip.has(`0:${t0}:${o0.norm}`) && !crossTypeSkip.has(`1:${t1}:${match.norm}`)) {
+            crossTypeSkip.add(`0:${t0}:${o0.norm}`);
+            crossTypeSkip.add(`1:${t1}:${match.norm}`);
+            const tn0 = perFileByType[0].get(t0)?.typeName || t0;
+            const tn1 = perFileByType[1].get(t1)?.typeName || t1;
+            const preview = o0.raw.slice(0, 50) + (o0.raw.length > 50 ? '…' : '');
+            rows.push({ category: sectionTitle,
+              location: `${tn0} › ${preview} → ${tn1} › ${preview}`,
+              field: 'group', values: [tn0, tn1], changeType: 'moved' });
+          }
+        }
+      }
+    }
+  }
+
+  // Process objectives within each type group in fixed order
+  const allTypeIds = [...new Set(parsedFiles.flatMap((_, fi) => [...perFileByType[fi].keys()]))];
+  const typeOrder = ['primary', 'secondary', 'exploratory'];
+  allTypeIds.sort((a, b) => {
+    const ia = typeOrder.indexOf(a), ib = typeOrder.indexOf(b);
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+  });
+
+  for (const typeId of allTypeIds) {
+    const typeName = parsedFiles.map((_, fi) => perFileByType[fi].get(typeId)?.typeName).find(Boolean) || typeId;
+    const objsPerFile = parsedFiles.map((_, fi) => perFileByType[fi].get(typeId)?.objectives || []);
+    const objGroups = matchItemsNWay(objsPerFile, () => null, o => o.norm);
+
+    for (const { values: objVals } of objGroups) {
+      const rep = objVals.find(v => v !== null);
+      if (!rep) continue;
+      // Skip objectives already emitted as cross-type moves
+      const isSkipped = objVals.some((v, fi) => v && crossTypeSkip.has(`${fi}:${typeId}:${v.norm}`));
+      if (isSkipped) continue;
+
+      const rawVals = objVals.map(v => v ? v.raw : null);
+      const ct = rowChangeType(rawVals) || 'present';
+      const preview = rep.raw.slice(0, 60) + (rep.raw.length > 60 ? '…' : '');
+      const objLocation = `${typeName} › ${preview}`;
+
+      rows.push({ category: sectionTitle, location: objLocation, field: 'objective', values: rawVals, changeType: ct });
+
+      // Match endpoints within this objective pair (only when objective is present in multiple files)
+      if (ct !== 'added' && ct !== 'removed') {
+        const epsPerFile = objVals.map(v => v ? v.endpoints : []);
+        const epGroups = matchItemsNWay(epsPerFile, () => null, e => e.norm);
+        for (const { values: epVals } of epGroups) {
+          const repEp = epVals.find(v => v !== null);
+          if (!repEp) continue;
+          const epRawVals = epVals.map(v => v ? v.raw : null);
+          const epCt = rowChangeType(epRawVals) || 'present';
+          const epPreview = repEp.raw.slice(0, 40) + (repEp.raw.length > 40 ? '…' : '');
+          rows.push({ category: sectionTitle,
+            location: `${objLocation} › ${epPreview}`,
+            field: 'endpoint', values: epRawVals, changeType: epCt });
+        }
+      }
+    }
+  }
+
+  return rows;
+}
+
+const OTHER_SECTION_DEFS = [
+  { id: 'inclusion',  label: 'Inclusion Criteria',        getRows: p => diffSingleTextSection(p, 'inclusion-section',  'Inclusion Criteria',        'Criterion') },
+  { id: 'exclusion',  label: 'Exclusion Criteria',        getRows: p => diffSingleTextSection(p, 'exclusion-section',  'Exclusion Criteria',        'Criterion') },
+  { id: 'population', label: 'Population',                getRows: p => diffPopulationSection(p) },
+  { id: 'objectives', label: 'Objectives & Endpoints',    getRows: p => diffObjectivesAndEndpoints(p) },
+  { id: 'design',     label: 'Overall Design',            getRows: p => diffTopLevelTextSection(p, 'overallDesignSummary',      'Overall Design') },
+  { id: 'statistics', label: 'Statistical Considerations',getRows: p => diffTopLevelTextSectionWhole(p, 'statisticConsiderations', 'Statistical Considerations') },
+];
+
+function runOtherDiff(parsedFiles) {
+  const byTab = {};
+  const discoveredTabs = [{ id: 'all', label: 'All' }];
+
+  for (const def of OTHER_SECTION_DEFS) {
+    const rows = def.getRows(parsedFiles);
+    if (rows.length > 0) {
+      byTab[def.id] = rows;
+      discoveredTabs.push({ id: def.id, label: def.label });
+    }
+  }
+
+  byTab.all = discoveredTabs.slice(1)
+    .flatMap(t => (byTab[t.id] || []).filter(r => r.changeType !== 'present'));
+
+  return { tabs: discoveredTabs, byTab };
+}
+
+// ================================================================
 // RENDERING
 // ================================================================
 const TABS = [
@@ -932,6 +1231,9 @@ function getDayRows(days)      { return days.filter(r => r.category !== 'Time Sl
 function getIntradayRows(days) { return days.filter(r => r.category === 'Time Slot' || (r.isGroupHeader && r.category === 'Time Slot')); }
 
 function getTabRows(tab) {
+  if (state.compareMode === 'other') {
+    return state.otherDiffResult?.byTab[tab] || [];
+  }
   if (!state.diffResult) return [];
   const d = state.diffResult;
   switch (tab) {
@@ -960,11 +1262,11 @@ function countRows(rows) {
 
 function renderResults() {
   const vf = validFiles();
-  if (!state.diffResult) return;
-  const d = state.diffResult;
+  if (state.compareMode === 'other' ? !state.otherDiffResult : !state.diffResult) return;
 
   // --- Tab bar ---
-  document.getElementById('tab-bar').innerHTML = TABS.map(tab => {
+  const activeTabs = state.compareMode === 'other' ? state.otherDiffResult.tabs : TABS;
+  document.getElementById('tab-bar').innerHTML = activeTabs.map(tab => {
     const { total } = countRows(getTabRows(tab.id));
     const active = state.activeTab === tab.id;
     return `<button data-tab="${tab.id}" class="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
@@ -990,10 +1292,10 @@ function renderResults() {
   // --- Diff table ---
   const rows = getTabRows(state.activeTab);
   const content = document.getElementById('diff-content');
-  const showEpochDay = !TABS_HIDE_EPOCH_DAY.has(state.activeTab);
+  const showEpochDay = state.compareMode === 'soa' && !TABS_HIDE_EPOCH_DAY.has(state.activeTab);
   const totalCols = (showEpochDay ? 4 : 3) + vf.length + 1; // Category + Location + [EpochDay] + Field + N files + Change
 
-  const activityDisclaimer = state.activeTab === 'activities'
+  const activityDisclaimer = state.compareMode === 'soa' && state.activeTab === 'activities'
     ? `<div class="px-4 py-2.5 text-xs text-amber-700 bg-amber-50 border-b border-amber-100 flex items-start gap-2">
         <svg class="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-amber-500" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126z"/>
@@ -1008,7 +1310,7 @@ function renderResults() {
   }
 
   const fileHeaders = vf.map((f, i) => {
-    const soaTitle = state.soaSections[i]?.[state.selectedSoaIdxs[i] ?? 0]?.title || '';
+    const soaTitle = state.compareMode === 'soa' ? (state.soaSections[i]?.[state.selectedSoaIdxs[i] ?? 0]?.title || '') : '';
     return `<th class="px-3 py-2.5 text-left text-xs font-semibold text-gray-500">
       <div class="flex items-center gap-1.5 whitespace-nowrap">
         <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-bold ${labelClass(i)}">${esc(fileLabel(i))}</span>
@@ -1066,27 +1368,41 @@ function renderResults() {
       else if (row.changeType === 'updated')     cls = 'val-changed'; // both sides shown in amber
       else if (row.changeType === 'moved')       cls = 'val-moved';  // both sides shown in purple
       else if (row.changeType === 'changed')     cls = String(v ?? '') === majorityStr ? 'val-match' : 'val-changed';
-      return `<td class="px-3 py-2.5 text-xs ${cls} max-w-xs break-words">${text}</td>`;
+      return `<td class="px-3 py-2.5 text-xs ${cls} break-words overflow-wrap-anywhere">${text}</td>`;
     }).join('');
 
     const epochDayCell = showEpochDay
       ? (row.epochDay != null
-          ? `<td class="px-3 py-2.5 text-xs text-gray-500 whitespace-nowrap">${esc(String(row.epochDay))}</td>`
+          ? `<td class="px-3 py-2.5 text-xs text-gray-500">${esc(String(row.epochDay))}</td>`
           : `<td class="px-3 py-2.5 text-xs val-absent">—</td>`)
       : '';
 
-    return `<tr class="row-${row.changeType} diff-row border-t border-gray-100/60">
-      <td class="px-3 py-2.5 text-xs text-gray-400 whitespace-nowrap">${esc(row.category)}</td>
-      <td class="px-3 py-2.5 text-xs text-gray-600 max-w-[240px] break-words">${esc(row.location)}</td>
+    return `<tr class="row-${row.changeType} diff-row border-t border-gray-100/60 align-top">
+      <td class="px-3 py-2.5 text-xs text-gray-400 break-words">${esc(row.category)}</td>
+      <td class="px-3 py-2.5 text-xs text-gray-600 break-words">${esc(row.location)}</td>
       ${epochDayCell}
-      <td class="px-3 py-2.5 text-xs text-gray-500 whitespace-nowrap mono">${esc(row.field)}</td>
+      <td class="px-3 py-2.5 text-xs text-gray-500 mono break-words">${esc(row.field)}</td>
       ${valueCells}
-      <td class="px-3 py-2.5 text-xs whitespace-nowrap">${badge}</td>
+      <td class="px-3 py-2.5 text-xs">${badge}</td>
     </tr>`;
   }).join('');
 
+  // Column widths: narrow fixed cols + location + equal-share value cols
+  const narrowPct = 8, locationPct = 20;
+  const fixedPct = narrowPct * (3 + (showEpochDay ? 1 : 0)) + locationPct;
+  const valuePct = Math.floor((100 - fixedPct) / vf.length);
+  const colgroup = `<colgroup>
+    <col style="width:${narrowPct}%">
+    <col style="width:${locationPct}%">
+    ${showEpochDay ? `<col style="width:${narrowPct}%">` : ''}
+    <col style="width:${narrowPct}%">
+    ${vf.map(() => `<col style="width:${valuePct}%">`).join('')}
+    <col style="width:${narrowPct}%">
+  </colgroup>`;
+
   content.innerHTML = activityDisclaimer + `
-    <table class="w-full border-collapse">
+    <table class="w-full border-collapse table-fixed">
+      ${colgroup}
       <thead class="sticky top-0 z-10 bg-white">
         <tr class="border-b border-gray-200">
           <th class="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 whitespace-nowrap">Category</th>
@@ -1107,9 +1423,13 @@ function renderResults() {
 function buildClipboard() {
   const vf = validFiles();
   const rows = getTabRows(state.activeTab).filter(r => !r.isGroupHeader);
-  const tabLabel = TABS.find(t => t.id === state.activeTab)?.label || state.activeTab;
+  const activeTabs = state.compareMode === 'other' ? (state.otherDiffResult?.tabs || TABS) : TABS;
+  const tabLabel = activeTabs.find(t => t.id === state.activeTab)?.label || state.activeTab;
   const L = [];
-  L.push(`=== FSD SOA DIFF — ${tabLabel.toUpperCase()} ===`);
+  const header = state.compareMode === 'other'
+    ? `=== PROTOCOL SECTIONS DIFF — ${tabLabel.toUpperCase()} ===`
+    : `=== FSD SOA DIFF — ${tabLabel.toUpperCase()} ===`;
+  L.push(header);
   L.push('Files:');
   vf.forEach((f, i) => L.push(`  ${fileLabel(i)}: ${displayName(f.name)}`));
   L.push('');
@@ -1212,9 +1532,11 @@ function syncControls() {
 
     const allHaveSoa = state.soaSections.every(secs => secs.length > 0);
     document.getElementById('compare-btn').disabled = !allHaveSoa;
+    document.getElementById('compare-other-btn').disabled = false;
   } else {
     soaPicker.classList.add('hidden');
     document.getElementById('compare-btn').disabled = true;
+    document.getElementById('compare-other-btn').disabled = true;
   }
 }
 
@@ -1276,13 +1598,30 @@ document.getElementById('file-list').addEventListener('click', e => {
   syncControls();
 });
 
-document.getElementById('compare-btn').addEventListener('click', doCompare);
+function doCompareOther() {
+  const vf = validFiles();
+  if (vf.length < 2) return;
+  state.compareMode = 'other';
+  state.otherDiffResult = runOtherDiff(vf.map(f => f.parsed));
+  state.activeTab = 'all';
+  document.getElementById('results-section').classList.remove('hidden');
+  renderResults();
+  document.getElementById('results-section').scrollIntoView({ behavior: 'smooth' });
+}
+
+document.getElementById('compare-btn').addEventListener('click', () => {
+  state.compareMode = 'soa';
+  doCompare();
+});
+document.getElementById('compare-other-btn').addEventListener('click', doCompareOther);
 
 document.getElementById('clear-btn').addEventListener('click', () => {
   state.files = [];
   state.soaSections = [];
   state.selectedSoaIdxs = [];
   state.diffResult = null;
+  state.otherDiffResult = null;
+  state.compareMode = 'soa';
   state.compareRan = false;
   state.activeTab = 'all';
   fileInput.value = '';
