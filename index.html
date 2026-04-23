@@ -1260,8 +1260,9 @@ function diffObjectivesAndEndpoints(parsedFiles) {
       const ct = rowChangeType(rawVals) || 'present';
       const preview = rep.raw.slice(0, 60) + (rep.raw.length > 60 ? '…' : '');
       const objLocation = `${typeName} › ${preview}`;
+      const objLocationFull = `${typeName} › ${rep.raw}`;
 
-      rows.push({ category: sectionTitle, location: objLocation, field: 'objective', values: rawVals, changeType: ct });
+      rows.push({ category: sectionTitle, location: objLocation, locationFull: objLocationFull, field: 'objective', values: rawVals, changeType: ct });
 
       // Estimands and endpoints within this objective (field-type scoped, hierarchy scoped)
       if (ct !== 'added' && ct !== 'removed') {
@@ -1274,6 +1275,7 @@ function diffObjectivesAndEndpoints(parsedFiles) {
             if (subVals.every(v => !v)) continue; // skip when all sides are empty
             rows.push({ category: sectionTitle,
               location: `${objLocation} › Estimand › ${subField}`,
+              locationFull: `${objLocationFull} › Estimand › ${subField}`,
               field: 'estimand', values: subVals, changeType: rowChangeType(subVals) || 'present' });
           }
         }
@@ -1287,6 +1289,7 @@ function diffObjectivesAndEndpoints(parsedFiles) {
           const epPreview = repEp.raw.slice(0, 40) + (repEp.raw.length > 40 ? '…' : '');
           rows.push({ category: sectionTitle,
             location: `${objLocation} › ${epPreview}`,
+            locationFull: `${objLocationFull} › ${repEp.raw}`,
             field: 'endpoint', values: epRawVals, changeType: rowChangeType(epRawVals) || 'present' });
         }
       }
@@ -1791,7 +1794,7 @@ document.getElementById('download-csv').addEventListener('click', () => {
   const header = ['Category', 'Location', 'Field', ...vf.map(f => displayName(f.name)), 'Change']
     .map(csvCell).join(',');
   const lines = [header, ...rows.map(row =>
-    [row.category, row.location, row.field, ...vf.map((_, i) => displayVal(row.values[i]) || '—'), row.changeType]
+    [row.category, row.locationFull || row.location, row.field, ...vf.map((_, i) => displayVal(row.values[i]) || '—'), row.changeType]
       .map(csvCell).join(',')
   )];
   const blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
