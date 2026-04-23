@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy"
-    content="default-src 'self' https://cdn.tailwindcss.com; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; connect-src 'none'; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com;">
+    content="default-src 'self' https://cdn.tailwindcss.com https://cdnjs.cloudflare.com; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://cdnjs.cloudflare.com; connect-src 'none'; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com;">
   <title>FSD SOA Diff Visualizer</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
@@ -34,6 +34,8 @@
     .row-present { background: #FAFAFA; }
     .val-moved   { color: #6D28D9; font-weight: 500; }
   </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 </head>
 <body class="h-full bg-gray-50 text-gray-900">
 
@@ -110,14 +112,31 @@
     <!-- Tab bar + Copy -->
     <div class="flex items-center justify-between flex-wrap gap-3">
       <div id="tab-bar" class="flex flex-wrap gap-1"></div>
-      <button id="copy-btn"
-        class="flex items-center gap-2 px-3 py-1.5 bg-[#1462FF] hover:bg-[#0d52e0] active:bg-[#0a47c9] text-white text-xs font-medium rounded-lg transition-colors"
-        style="box-shadow:0 1px 0 rgba(0,0,0,.08),inset 0 -1px 0 rgba(0,0,0,.2)">
-        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 7.5V6.108c0-1.135.845-2.098 1.976-2.192.373-.03.748-.057 1.123-.08M15.75 18H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08M15.75 18.75v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5A3.375 3.375 0 006.375 7.5H5.25m11.9-3.664A2.251 2.251 0 0015 2.25h-1.5a2.251 2.251 0 00-2.15 1.586m5.8 0c.065.21.1.433.1.664v.75h-6V4.5c0-.231.035-.454.1-.664M6.75 7.5H4.875c-.621 0-1.125.504-1.125 1.125v12c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V16.5a9 9 0 00-9-9z"/>
-        </svg>
-        Copy diff
-      </button>
+      <div class="flex items-center gap-2">
+        <button id="copy-btn"
+          class="flex items-center gap-2 px-3 py-1.5 bg-[#1462FF] hover:bg-[#0d52e0] active:bg-[#0a47c9] text-white text-xs font-medium rounded-lg transition-colors"
+          style="box-shadow:0 1px 0 rgba(0,0,0,.08),inset 0 -1px 0 rgba(0,0,0,.2)">
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 7.5V6.108c0-1.135.845-2.098 1.976-2.192.373-.03.748-.057 1.123-.08M15.75 18H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08M15.75 18.75v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5A3.375 3.375 0 006.375 7.5H5.25m11.9-3.664A2.251 2.251 0 0015 2.25h-1.5a2.251 2.251 0 00-2.15 1.586m5.8 0c.065.21.1.433.1.664v.75h-6V4.5c0-.231.035-.454.1-.664M6.75 7.5H4.875c-.621 0-1.125.504-1.125 1.125v12c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V16.5a9 9 0 00-9-9z"/>
+          </svg>
+          Copy diff
+        </button>
+        <!-- Download dropdown -->
+        <div class="relative" id="download-wrapper">
+          <button id="download-btn"
+            class="flex items-center gap-1.5 px-3 py-1.5 bg-[#1462FF] hover:bg-[#0d52e0] active:bg-[#0a47c9] text-white text-xs font-medium rounded-lg transition-colors"
+            style="box-shadow:0 1px 0 rgba(0,0,0,.08),inset 0 -1px 0 rgba(0,0,0,.2)">
+            Download
+            <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5"/>
+            </svg>
+          </button>
+          <div id="download-menu" class="hidden absolute right-0 mt-1 w-44 bg-white border border-gray-200 rounded-lg shadow-lg z-50 py-1 text-xs">
+            <button id="download-csv" class="w-full text-left px-3 py-2 text-gray-700 hover:bg-gray-50 transition-colors">Download as CSV</button>
+            <button id="download-pdf" class="w-full text-left px-3 py-2 text-gray-700 hover:bg-gray-50 transition-colors">Download as PDF</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Summary bar -->
@@ -1745,6 +1764,75 @@ document.getElementById('tab-bar').addEventListener('click', e => {
   if (!btn) return;
   state.activeTab = btn.dataset.tab;
   renderResults();
+});
+
+// ================================================================
+// DOWNLOAD DROPDOWN
+// ================================================================
+const downloadBtn  = document.getElementById('download-btn');
+const downloadMenu = document.getElementById('download-menu');
+
+downloadBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  downloadMenu.classList.toggle('hidden');
+});
+
+document.addEventListener('click', () => downloadMenu.classList.add('hidden'));
+
+function csvCell(val) {
+  const s = String(val ?? '—');
+  return '"' + s.replace(/"/g, '""') + '"';
+}
+
+document.getElementById('download-csv').addEventListener('click', () => {
+  downloadMenu.classList.add('hidden');
+  const vf = validFiles();
+  const rows = getTabRows(state.activeTab).filter(r => !r.isGroupHeader);
+  const header = ['Category', 'Location', 'Field', ...vf.map(f => displayName(f.name)), 'Change']
+    .map(csvCell).join(',');
+  const lines = [header, ...rows.map(row =>
+    [row.category, row.location, row.field, ...vf.map((_, i) => displayVal(row.values[i]) || '—'), row.changeType]
+      .map(csvCell).join(',')
+  )];
+  const blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const ts = new Date().toISOString().slice(0,19).replace(/[:T]/g, '-');
+  a.href = url; a.download = `diff-${state.activeTab}-${ts}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+document.getElementById('download-pdf').addEventListener('click', async () => {
+  downloadMenu.classList.add('hidden');
+  const btn = document.getElementById('download-btn');
+  const origHTML = btn.innerHTML;
+  btn.innerHTML = 'Generating...';
+  btn.disabled = true;
+  try {
+    const el = document.getElementById('diff-content');
+    const canvas = await html2canvas(el, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF('l', 'mm', 'a4');
+    const pageW = pdf.internal.pageSize.getWidth();
+    const pageH = pdf.internal.pageSize.getHeight();
+    const imgW = pageW;
+    const imgH = (canvas.height * imgW) / canvas.width;
+    const imgData = canvas.toDataURL('image/png');
+    let y = 0;
+    let remaining = imgH;
+    while (remaining > 0) {
+      if (y > 0) pdf.addPage();
+      pdf.addImage(imgData, 'PNG', 0, -y, imgW, imgH);
+      y += pageH;
+      remaining -= pageH;
+    }
+    const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    pdf.save(`diff-${state.activeTab}-${ts}.pdf`);
+  } finally {
+    btn.innerHTML = origHTML;
+    btn.disabled = false;
+  }
 });
 
 document.getElementById('copy-btn').addEventListener('click', () => {
