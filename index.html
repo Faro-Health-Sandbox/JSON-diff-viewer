@@ -1795,16 +1795,34 @@ function csvCell(val) {
   return '"' + s.replace(/"/g, '""') + '"';
 }
 
+function exportTitle() {
+  const vf = validFiles();
+  const names = vf.map(f => displayName(f.name));
+  const stem = names.length >= 2 ? `${names[0]} vs ${names[1]}` : (names[0] || 'Diff');
+  const now = new Date();
+  const ts = now.getFullYear() + '-'
+    + String(now.getMonth() + 1).padStart(2, '0') + '-'
+    + String(now.getDate()).padStart(2, '0') + ' '
+    + String(now.getHours()).padStart(2, '0') + ':'
+    + String(now.getMinutes()).padStart(2, '0');
+  return `${stem} \u2014 ${ts}`;
+}
+
 document.getElementById('download-csv').addEventListener('click', () => {
   downloadMenu.classList.add('hidden');
   const vf = validFiles();
   const rows = getTabRows(state.activeTab).filter(r => !r.isGroupHeader);
   const header = ['Category', 'Location', 'Field', ...vf.map(f => displayName(f.name)), 'Change']
     .map(csvCell).join(',');
-  const lines = [header, ...rows.map(row =>
-    [row.category, row.locationFull || row.location, row.field, ...vf.map((_, i) => displayVal(row.values[i]) || '—'), row.changeType]
-      .map(csvCell).join(',')
-  )];
+  const lines = [
+    exportTitle(),
+    '',
+    header,
+    ...rows.map(row =>
+      [row.category, row.locationFull || row.location, row.field, ...vf.map((_, i) => displayVal(row.values[i]) || '—'), row.changeType]
+        .map(csvCell).join(',')
+    )
+  ];
   const blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -1821,7 +1839,16 @@ document.getElementById('download-pdf').addEventListener('click', async () => {
   btn.disabled = true;
   try {
     const el = document.getElementById('diff-content');
-    const canvas = await html2canvas(el, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
+    const titleEl = document.createElement('div');
+    titleEl.textContent = exportTitle();
+    Object.assign(titleEl.style, { fontWeight: 'bold', fontSize: '16px', color: '#111827', marginBottom: '12px', fontFamily: '-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif' });
+    el.insertBefore(titleEl, el.firstChild);
+    let canvas;
+    try {
+      canvas = await html2canvas(el, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
+    } finally {
+      el.removeChild(titleEl);
+    }
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF('l', 'mm', 'a4');
     const pageW = pdf.internal.pageSize.getWidth();
