@@ -1839,32 +1839,34 @@ document.getElementById('download-pdf').addEventListener('click', async () => {
   btn.disabled = true;
   try {
     const el = document.getElementById('diff-content');
+
+    // Inject title above table
     const titleEl = document.createElement('div');
     titleEl.textContent = exportTitle();
     Object.assign(titleEl.style, { fontWeight: 'bold', fontSize: '16px', color: '#111827', marginBottom: '12px', fontFamily: '-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif' });
     el.insertBefore(titleEl, el.firstChild);
+
+    // Fix badge/chip positioning (html2canvas inline-flex rendering issue)
+    const badgeStyle = document.createElement('style');
+    badgeStyle.id = 'pdf-badge-fix';
+    badgeStyle.textContent = '.diff-row td span, .diff-row td div { display: inline-block !important; line-height: 1 !important; vertical-align: middle !important; }';
+    document.head.appendChild(badgeStyle);
+
     let canvas;
     try {
-      canvas = await html2canvas(el, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
+      const scale = Math.max(window.devicePixelRatio || 1, 3);
+      canvas = await html2canvas(el, { scale, useCORS: true, backgroundColor: '#ffffff' });
+      const imgData = canvas.toDataURL('image/png');
+      const { jsPDF } = window.jspdf;
+      const pw = canvas.width / scale;
+      const ph = canvas.height / scale;
+      const pdf = new jsPDF({ orientation: pw > ph ? 'l' : 'p', unit: 'px', format: [pw, ph] });
+      pdf.addImage(imgData, 'PNG', 0, 0, pw, ph);
+      pdf.save(downloadFilename('pdf'));
     } finally {
       el.removeChild(titleEl);
+      document.head.removeChild(badgeStyle);
     }
-    const { jsPDF } = window.jspdf;
-    const pdf = new jsPDF('l', 'mm', 'a4');
-    const pageW = pdf.internal.pageSize.getWidth();
-    const pageH = pdf.internal.pageSize.getHeight();
-    const imgW = pageW;
-    const imgH = (canvas.height * imgW) / canvas.width;
-    const imgData = canvas.toDataURL('image/png');
-    let y = 0;
-    let remaining = imgH;
-    while (remaining > 0) {
-      if (y > 0) pdf.addPage();
-      pdf.addImage(imgData, 'PNG', 0, -y, imgW, imgH);
-      y += pageH;
-      remaining -= pageH;
-    }
-    pdf.save(downloadFilename('pdf'));
   } finally {
     btn.innerHTML = origHTML;
     btn.disabled = false;
